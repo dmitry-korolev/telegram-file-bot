@@ -13,12 +13,15 @@ function createTelegramUserFilesRepository(sqliteClient) {
     findByFileUniqueId,
     getPendingManualDownloadQueue,
     getManualDownloadQueue,
+    getManualDownloadQueueSummary,
     getShownToUserFiles,
     getStats,
     getNextQueuePosition,
+    createFileEvent,
     markFilesAsShownToUser,
     markFilesAsDownloadConfirmed,
     markFilesAsSendFailed,
+    markFilesDeleteMessageFailed,
     markActiveQueueAsDeletedByUser
   };
 
@@ -55,6 +58,24 @@ function createTelegramUserFilesRepository(sqliteClient) {
 
       CREATE INDEX IF NOT EXISTS idx_telegram_user_files_pending_queue
       ON telegram_user_files (authorized_user_id, status, file_kind, queue_position, received_at);
+
+      CREATE TABLE IF NOT EXISTS telegram_file_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        file_record_id INTEGER,
+        file_unique_id TEXT,
+        file_kind TEXT,
+        status TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        error_code TEXT,
+        error_message TEXT,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_telegram_file_events_record_id
+      ON telegram_file_events (file_record_id);
+
+      CREATE INDEX IF NOT EXISTS idx_telegram_file_events_file_unique_id
+      ON telegram_file_events (file_unique_id);
     `);
   }
 
@@ -166,6 +187,19 @@ function createTelegramUserFilesRepository(sqliteClient) {
     `);
   }
 
+  function getManualDownloadQueueSummary() {
+    const rows = sqliteClient.query(`
+      SELECT
+        COUNT(*) AS file_count,
+        COALESCE(SUM(CASE WHEN file_size IS NOT NULL THEN file_size ELSE 0 END), 0) AS total_known_size,
+        SUM(CASE WHEN file_size IS NULL THEN 1 ELSE 0 END) AS unknown_size_files
+      FROM telegram_user_files
+      WHERE status IN ('pending_manual_download', 'pending_size_unknown', 'shown_to_user');
+    `);
+
+    return normalizeQueueSummaryRow(rows[0] || {});
+  }
+
   function getShownToUserFiles() {
     return sqliteClient.query(`
       SELECT *
@@ -204,6 +238,34 @@ function createTelegramUserFilesRepository(sqliteClient) {
     `);
 
     return rows.length > 0 ? rows[0].next_queue_position : 1;
+  }
+
+  function createFileEvent(event) {
+    const normalizedEvent = normalizeFileEvent(event);
+    const insertedRows = sqliteClient.query(`
+      INSERT INTO telegram_file_events (
+        file_record_id,
+        file_unique_id,
+        file_kind,
+        status,
+        event_type,
+        error_code,
+        error_message,
+        created_at
+      ) VALUES (
+        ${toSqlValue(normalizedEvent.file_record_id)},
+        ${toSqlValue(normalizedEvent.file_unique_id)},
+        ${toSqlValue(normalizedEvent.file_kind)},
+        ${toSqlValue(normalizedEvent.status)},
+        ${toSqlValue(normalizedEvent.event_type)},
+        ${toSqlValue(normalizedEvent.error_code)},
+        ${toSqlValue(normalizedEvent.error_message)},
+        ${toSqlValue(normalizedEvent.created_at)}
+      )
+      RETURNING *;
+    `);
+
+    return insertedRows[0] || null;
   }
 
   function markFilesAsShownToUser(recordIds, shownAt) {
@@ -249,6 +311,27 @@ function createTelegramUserFilesRepository(sqliteClient) {
     `);
   }
 
+  function markFilesDeleteMessageFailed(recordIds, error, failedAt) {
+    const ids = Array.isArray(recordIds) ? recordIds.filter(isPositiveInteger) : [];
+
+    if (ids.length === 0) {
+      return [];
+    }
+
+    const timestamp = failedAt || new Date().toISOString();
+    const idsSql = ids.map(toSqlValue).join(', ');
+    const errorMessage = error && error.message ? error.message : String(error || 'delete_message_failed');
+
+    return sqliteClient.query(`
+      UPDATE telegram_user_files
+      SET error_code = 'delete_message_failed',
+          error_message = ${toSqlValue(errorMessage)},
+          updated_at = ${toSqlValue(timestamp)}
+      WHERE id IN (${idsSql})
+      RETURNING *;
+    `);
+  }
+
   function markActiveQueueAsDeletedByUser(deletedAt) {
     const timestamp = deletedAt || new Date().toISOString();
 
@@ -280,6 +363,28 @@ function createTelegramUserFilesRepository(sqliteClient) {
       RETURNING *;
     `);
   }
+}
+
+function normalizeFileEvent(event) {
+  if (!event || typeof event !== 'object') {
+    throw new Error('event is required');
+  }
+
+  const fileRecordId = event.file_record_id === undefined ? event.fileRecordId : event.file_record_id;
+  const fileUniqueId = event.file_unique_id === undefined ? event.fileUniqueId : event.file_unique_id;
+  const fileKind = event.file_kind === undefined ? event.fileKind : event.file_kind;
+  const eventType = event.event_type === undefined ? event.eventType : event.event_type;
+
+  return {
+    file_record_id: optionalNumber(fileRecordId),
+    file_unique_id: optionalValue(fileUniqueId),
+    file_kind: optionalValue(fileKind),
+    status: requiredString(event.status, 'status'),
+    event_type: requiredString(eventType, 'event_type'),
+    error_code: optionalValue(event.error_code === undefined ? event.errorCode : event.error_code),
+    error_message: optionalValue(event.error_message === undefined ? event.errorMessage : event.error_message),
+    created_at: event.created_at || event.createdAt || new Date().toISOString()
+  };
 }
 
 function normalizeCreateRecord(record) {
@@ -376,6 +481,14 @@ function normalizeStatsRow(row) {
   };
 }
 
+function normalizeQueueSummaryRow(row) {
+  return {
+    fileCount: normalizeStatNumber(row.file_count),
+    totalKnownSize: normalizeStatNumber(row.total_known_size),
+    unknownSizeFiles: normalizeStatNumber(row.unknown_size_files)
+  };
+}
+
 function normalizeStatNumber(value) {
   return Number.isFinite(value) ? value : 0;
 }
@@ -383,5 +496,6 @@ function normalizeStatNumber(value) {
 module.exports = {
   createTelegramUserFilesRepository,
   normalizeCreateRecord,
+  normalizeQueueSummaryRow,
   normalizeStatsRow
 };

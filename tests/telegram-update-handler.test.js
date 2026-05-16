@@ -15,6 +15,7 @@ async function runTests() {
   await testIgnoresUnauthorizedMessages();
   await testSecondAuthorizedUserIsAccepted();
   await testSmallFilesUseDownloaderAndDownloadedRecord();
+  await testSmallDownloadFailureCreatesFailedRecordAndResponds();
   await testLargeFilesAreQueuedWithoutDownloader();
   await testDuplicateFilesAreSkipped();
   await testUnknownSizeFilesUseManualQueueStatus();
@@ -22,6 +23,9 @@ async function runTests() {
   await testCommandMessageWithoutAttachmentsIsNotDeleted();
   await testProcessingSendsSingleFileResponse();
   await testProcessingSendsMultipleFilesSummary();
+  await testDeleteMessageFailureIsRecordedWithoutStatusOverwrite();
+  await testMediaGroupAggregatesResponseAfterDelay();
+  await testSeparateMediaGroupsDoNotMixResponses();
   await testQueueCommandShowsQueue();
   await testStatsCommandShowsAggregateStats();
   await testClearQueueCommandRequestsConfirmation();
@@ -160,8 +164,31 @@ async function testSmallFilesUseDownloaderAndDownloadedRecord() {
   assert.strictEqual(deps.messageSender.calls.length, 1);
   assert.strictEqual(
     deps.messageSender.calls[0].text,
-    'Всё, все получил: что смог - скачал, что не смог - положил в очередь. Загружено: 1, в очереди: 0, дубликаты: 0, ошибок: 0.'
+    'Файл "file" скачан.'
   );
+}
+
+async function testSmallDownloadFailureCreatesFailedRecordAndResponds() {
+  const deps = createMockDependencies({
+    failingDownloadFileIds: ['doc-small']
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 21,
+    message: createMessage({
+      document: createTelegramFile('doc-small', 'uniq-doc-small-failed', DEFAULT_SMALL_FILE_LIMIT_BYTES)
+    })
+  });
+
+  assert.strictEqual(result.accepted, true);
+  assert.strictEqual(result.files[0].status, 'download_failed');
+  assert.strictEqual(deps.fileRepository.records[0].status, 'download_failed');
+  assert.strictEqual(deps.fileRepository.records[0].error_code, 'download_failed');
+  assert.strictEqual(deps.fileRepository.records[0].error_message, 'Cannot download doc-small');
+  assert.strictEqual(deps.fileRepository.records[0].local_path, null);
+  assert.strictEqual(deps.messageSender.calls[0].text, 'Файл "file" не удалось скачать.');
+  assert.strictEqual(deps.fileRepository.events.some((event) => event.event_type === 'download_failed'), true);
 }
 
 async function testLargeFilesAreQueuedWithoutDownloader() {
@@ -183,7 +210,7 @@ async function testLargeFilesAreQueuedWithoutDownloader() {
   assert.strictEqual(deps.messageSender.calls.length, 1);
   assert.strictEqual(
     deps.messageSender.calls[0].text,
-    'Всё, все получил: что смог - скачал, что не смог - положил в очередь. Загружено: 0, в очереди: 1, дубликаты: 0, ошибок: 0.'
+    'Файл "video" добавлен в очередь.'
   );
 }
 
@@ -207,7 +234,7 @@ async function testDuplicateFilesAreSkipped() {
   assert.strictEqual(deps.messageSender.calls.length, 1);
   assert.strictEqual(
     deps.messageSender.calls[0].text,
-    'Всё, все получил: что смог - скачал, что не смог - положил в очередь. Загружено: 0, в очереди: 0, дубликаты: 1, ошибок: 0.'
+    'Файл "file" уже был раньше.'
   );
 }
 
@@ -282,7 +309,7 @@ async function testProcessingSendsSingleFileResponse() {
   assert.strictEqual(deps.messageSender.calls[0].chatId, 5001);
   assert.strictEqual(
     deps.messageSender.calls[0].text,
-    'Всё, все получил: что смог - скачал, что не смог - положил в очередь. Загружено: 1, в очереди: 0, дубликаты: 0, ошибок: 0.'
+    'Файл "report.pdf" скачан.'
   );
 }
 
@@ -306,8 +333,97 @@ async function testProcessingSendsMultipleFilesSummary() {
   assert.strictEqual(result.sendMessageCalled, true);
   assert.strictEqual(
     deps.messageSender.calls[0].text,
-    'Всё, все получил: что смог - скачал, что не смог - положил в очередь. Загружено: 1, в очереди: 1, дубликаты: 1, ошибок: 0.'
+    'Итог: скачано 1, в очереди 1, дубликатов 1, ошибок 0.'
   );
+}
+
+async function testDeleteMessageFailureIsRecordedWithoutStatusOverwrite() {
+  const deps = createMockDependencies({
+    failDeleteMessage: true
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 22,
+    message: createMessage({
+      document: createTelegramFile('doc-small', 'uniq-doc-delete-failed', 1024)
+    })
+  });
+
+  assert.strictEqual(result.deleteMessageCalled, true);
+  assert.ok(result.deleteMessageError);
+  assert.strictEqual(deps.fileRepository.records[0].status, 'downloaded');
+  assert.strictEqual(deps.fileRepository.records[0].error_code, 'delete_message_failed');
+  assert.strictEqual(deps.fileRepository.records[0].error_message, 'Cannot delete message');
+  assert.strictEqual(deps.fileRepository.events.some((event) => event.event_type === 'delete_message_failed'), true);
+}
+
+async function testMediaGroupAggregatesResponseAfterDelay() {
+  const timers = createFakeTimers();
+  const deps = createMockDependencies(Object.assign({}, timers.dependencies, {
+    mediaGroupResponseDelayMs: 25
+  }));
+  const handler = createTelegramUpdateHandler(deps);
+
+  const first = await handler.handleUpdate({
+    update_id: 23,
+    message: createMessage({
+      media_group_id: 'album-1',
+      document: createTelegramFile('doc-small-1', 'uniq-album-1', 1024)
+    })
+  });
+  const second = await handler.handleUpdate({
+    update_id: 24,
+    message: createMessage({
+      media_group_id: 'album-1',
+      video: createTelegramFile('video-large-1', 'uniq-album-2', DEFAULT_SMALL_FILE_LIMIT_BYTES + 1)
+    })
+  });
+
+  assert.strictEqual(first.responseDeferred, true);
+  assert.strictEqual(second.responseDeferred, true);
+  assert.strictEqual(deps.messageSender.calls.length, 0);
+  assert.strictEqual(deps.fileRepository.records.length, 2);
+  assert.strictEqual(timers.cleared.length, 1);
+
+  await timers.flushLatest();
+
+  assert.strictEqual(deps.messageSender.calls.length, 1);
+  assert.strictEqual(
+    deps.messageSender.calls[0].text,
+    'Итог: скачано 1, в очереди 1, дубликатов 0, ошибок 0.'
+  );
+}
+
+async function testSeparateMediaGroupsDoNotMixResponses() {
+  const timers = createFakeTimers();
+  const deps = createMockDependencies(Object.assign({}, timers.dependencies, {
+    mediaGroupResponseDelayMs: 25
+  }));
+  const handler = createTelegramUpdateHandler(deps);
+
+  await handler.handleUpdate({
+    update_id: 25,
+    message: createMessage({
+      media_group_id: 'album-a',
+      document: createTelegramFile('doc-a', 'uniq-album-a', 1024)
+    })
+  });
+  await handler.handleUpdate({
+    update_id: 26,
+    message: createMessage({
+      media_group_id: 'album-b',
+      document: createTelegramFile('doc-b', 'uniq-album-b', 1024)
+    })
+  });
+
+  await timers.flushAt(0);
+  assert.strictEqual(deps.messageSender.calls.length, 1);
+  assert.strictEqual(deps.messageSender.calls[0].text.includes('Файл "file" скачан.'), true);
+
+  await timers.flushAt(1);
+  assert.strictEqual(deps.messageSender.calls.length, 2);
+  assert.strictEqual(deps.messageSender.calls[1].text.includes('Файл "file" скачан.'), true);
 }
 
 async function testQueueCommandShowsQueue() {
@@ -470,17 +586,21 @@ function createMockDependencies(options) {
   const normalizedOptions = options || {};
   const existingFileUniqueIds = new Set(normalizedOptions.existingFileUniqueIds || []);
   const failingFileIds = new Set(normalizedOptions.failingFileIds || []);
+  const failingDownloadFileIds = new Set(normalizedOptions.failingDownloadFileIds || []);
   let queuePosition = 0;
 
   const fileRepository = {
     records: [],
     pendingQueue: normalizedOptions.pendingQueue || [],
     manualQueue: normalizedOptions.manualQueue || normalizedOptions.pendingQueue || [],
+    queueSummary: normalizedOptions.queueSummary || null,
     shownQueue: normalizedOptions.shownQueue || [],
     shownIds: [],
     confirmedIds: [],
     sendFailedIds: [],
     deletedRecords: [],
+    deleteFailedIds: [],
+    events: [],
     async findByFileUniqueId(fileUniqueId) {
       if (existingFileUniqueIds.has(fileUniqueId)) {
         return { id: 9001, file_unique_id: fileUniqueId };
@@ -493,8 +613,27 @@ function createMockDependencies(options) {
       this.records.push(created);
       return created;
     },
+    async createFileEvent(event) {
+      const created = Object.assign({ id: this.events.length + 1 }, event);
+      this.events.push(created);
+      return created;
+    },
     async getManualDownloadQueue() {
       return this.manualQueue.filter((record) => record.status !== 'deleted_by_user');
+    },
+    async getManualDownloadQueueSummary() {
+      if (this.queueSummary) {
+        return this.queueSummary;
+      }
+
+      const active = this.manualQueue.filter((record) => ['pending_manual_download', 'pending_size_unknown', 'shown_to_user'].includes(record.status));
+      return {
+        fileCount: active.length,
+        totalKnownSize: active.reduce((sum, record) => (
+          Number.isFinite(record.file_size) ? sum + record.file_size : sum
+        ), 0),
+        unknownSizeFiles: active.filter((record) => !Number.isFinite(record.file_size)).length
+      };
     },
     async getPendingManualDownloadQueue(options) {
       const limit = options && options.limit ? options.limit : 10;
@@ -543,6 +682,19 @@ function createMockDependencies(options) {
       this.sendFailedIds.push(...recordIds);
       return recordIds.map((id) => ({ id, status: 'send_failed' }));
     },
+    async markFilesDeleteMessageFailed(recordIds, error) {
+      this.deleteFailedIds.push(...recordIds);
+      const errorMessage = error && error.message ? error.message : String(error || 'delete_message_failed');
+      this.records = this.records.map((record) => (
+        recordIds.includes(record.id)
+          ? Object.assign({}, record, {
+            error_code: 'delete_message_failed',
+            error_message: errorMessage
+          })
+          : record
+      ));
+      return this.records.filter((record) => recordIds.includes(record.id));
+    },
     async markActiveQueueAsDeletedByUser() {
       this.deletedRecords = this.manualQueue.filter((record) => ['pending_manual_download', 'pending_size_unknown', 'shown_to_user'].includes(record.status));
       this.manualQueue = this.manualQueue.map((record) => (
@@ -556,6 +708,11 @@ function createMockDependencies(options) {
     calls: [],
     async download(attachment) {
       this.calls.push(attachment);
+
+      if (failingDownloadFileIds.has(attachment.file_id)) {
+        throw new Error(`Cannot download ${attachment.file_id}`);
+      }
+
       return { localPath: `/tmp/${attachment.file_id}` };
     }
   };
@@ -564,6 +721,10 @@ function createMockDependencies(options) {
     calls: [],
     async deleteMessage(payload) {
       this.calls.push(payload);
+
+      if (normalizedOptions.failDeleteMessage) {
+        throw new Error('Cannot delete message');
+      }
     }
   };
 
@@ -610,6 +771,9 @@ function createMockDependencies(options) {
       queuePosition += 1;
       return queuePosition;
     },
+    mediaGroupResponseDelayMs: normalizedOptions.mediaGroupResponseDelayMs,
+    setTimeoutFn: normalizedOptions.setTimeoutFn,
+    clearTimeoutFn: normalizedOptions.clearTimeoutFn,
     now: () => '2026-05-16T10:00:00.000Z'
   };
 
@@ -623,10 +787,50 @@ function createMockDependencies(options) {
 function createMessage(overrides) {
   return Object.assign({
     message_id: 1001,
-    media_group_id: 'media-group-1',
+    media_group_id: null,
     chat: { id: 5001 },
     from: { id: 42 }
   }, overrides || {});
+}
+
+function createFakeTimers() {
+  const scheduled = [];
+  const cleared = [];
+  let nextId = 1;
+
+  return {
+    dependencies: {
+      setTimeoutFn(callback) {
+        const timer = {
+          id: nextId,
+          callback
+        };
+        nextId += 1;
+        scheduled.push(timer);
+        return timer.id;
+      },
+      clearTimeoutFn(timerId) {
+        cleared.push(timerId);
+      }
+    },
+    cleared,
+    async flushLatest() {
+      const active = scheduled.filter((timer) => !cleared.includes(timer.id));
+      const timer = active[active.length - 1];
+
+      if (timer) {
+        await timer.callback();
+      }
+    },
+    async flushAt(index) {
+      const active = scheduled.filter((timer) => !cleared.includes(timer.id));
+      const timer = active[index];
+
+      if (timer) {
+        await timer.callback();
+      }
+    }
+  };
 }
 
 function createTelegramFile(fileId, fileUniqueId, fileSize, overrides) {

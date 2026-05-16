@@ -1,6 +1,6 @@
 # Telegram File Bot
 
-Stage 1 scaffold for a Telegram bot that will process `document`, `photo`, and `video` attachments. The current state intentionally avoids any real Telegram API integration and focuses on testable domain logic.
+Telegram bot for processing `document`, `photo`, and `video` attachments with automatic small-file downloads and a shared manual-download queue for large files.
 
 ## Run
 
@@ -15,6 +15,8 @@ npm start
 With a real `TELEGRAM_BOT_TOKEN`, `npm start` runs long polling against Telegram Bot API. It reads message and callback updates, processes messages from users listed in `AUTHORIZED_USER_IDS`, downloads small supported files to `DOWNLOADS_DIR`, stores metadata in `SQLITE_DB_PATH`, and deletes processed source messages when Telegram allows it.
 
 For bursty uploads, the bot processes updates sequentially and advances the Telegram update offset only after an update is handled successfully. Telegram API calls are throttled by `TELEGRAM_API_MIN_REQUEST_INTERVAL_MS`.
+
+For Telegram media groups, file processing starts immediately for every update, but the bot sends one aggregated summary after `MEDIA_GROUP_RESPONSE_DELAY_MS` milliseconds without new updates for the same group.
 
 Development mode with file watching:
 

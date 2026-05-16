@@ -40,7 +40,8 @@ async function main() {
     messageSender: telegramClient,
     fileSender: telegramClient,
     callbackResponder: telegramClient,
-    nextQueuePosition: () => fileRepository.getNextQueuePosition()
+    nextQueuePosition: () => fileRepository.getNextQueuePosition(),
+    mediaGroupResponseDelayMs: config.mediaGroupResponseDelayMs
   });
   const pollingLoop = createTelegramPollingLoop({
     telegramClient,
@@ -58,7 +59,8 @@ async function main() {
         sqliteDbPath: config.sqliteDbPath,
         smallFileLimitBytes: config.smallFileLimitBytes,
         telegramPollingTimeoutSeconds: config.telegramPollingTimeoutSeconds,
-        telegramApiMinRequestIntervalMs: config.telegramApiMinRequestIntervalMs
+        telegramApiMinRequestIntervalMs: config.telegramApiMinRequestIntervalMs,
+        mediaGroupResponseDelayMs: config.mediaGroupResponseDelayMs
       },
       null,
       2

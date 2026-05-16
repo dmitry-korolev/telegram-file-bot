@@ -69,6 +69,20 @@ function buildQueueMessage(files) {
   return `В очереди файлов: ${normalizedFiles.length}. Суммарный объем: ${formatFileSize(totalSize)}${unknownSizeText}.`;
 }
 
+function buildQueueSummaryMessage(summary) {
+  const normalizedSummary = summary || {};
+  const fileCount = normalizedSummary.fileCount || 0;
+
+  if (fileCount === 0) {
+    return 'В очереди нет файлов для ручного скачивания.';
+  }
+
+  const unknownSizeCount = normalizedSummary.unknownSizeFiles || 0;
+  const unknownSizeText = unknownSizeCount > 0 ? `, файлов с неизвестным размером: ${unknownSizeCount}` : '';
+
+  return `В очереди файлов: ${fileCount}. Суммарный объем: ${formatFileSize(normalizedSummary.totalKnownSize || 0)}${unknownSizeText}.`;
+}
+
 function buildStatsMessage(stats) {
   const normalizedStats = stats || {};
 
@@ -113,28 +127,32 @@ function buildProcessingResponse(files) {
     return null;
   }
 
+  if (normalizedFiles.length === 1) {
+    return buildSingleFileResponse(normalizedFiles[0]);
+  }
+
   const counts = countFileStatuses(normalizedFiles);
 
-  return `Всё, все получил: что смог - скачал, что не смог - положил в очередь. Загружено: ${counts.downloaded}, в очереди: ${counts.queued}, дубликаты: ${counts.duplicates}, ошибок: ${counts.errors}.`;
+  return `Итог: скачано ${counts.downloaded}, в очереди ${counts.queued}, дубликатов ${counts.duplicates}, ошибок ${counts.errors}.`;
 }
 
 function buildSingleFileResponse(file) {
   const fileName = file.fileName || defaultFileName(file.fileKind);
 
   if (file.status === 'downloaded') {
-    return `Файл "${fileName}" получен и загружен.`;
+    return `Файл "${fileName}" скачан.`;
   }
 
   if (file.status === 'pending_manual_download') {
-    return `Файл "${fileName}" больше 20 МБ. Я не могу скачать его автоматически через Telegram Bot API, поэтому добавил его в очередь ручного скачивания.`;
+    return `Файл "${fileName}" добавлен в очередь.`;
   }
 
   if (file.status === 'duplicate_skipped') {
-    return `Файл "${fileName}" уже был получен раньше, поэтому я не стал обрабатывать его повторно.`;
+    return `Файл "${fileName}" уже был раньше.`;
   }
 
   if (file.status === 'pending_size_unknown') {
-    return `Файл "${fileName}" добавлен в очередь ручного скачивания, потому что Telegram не передал размер файла.`;
+    return `Файл "${fileName}" добавлен в очередь, размер неизвестен.`;
   }
 
   if (file.status === 'download_failed') {
@@ -197,6 +215,7 @@ module.exports = {
   createShowNextFilesKeyboard,
   createClearQueueConfirmationKeyboard,
   buildQueueMessage,
+  buildQueueSummaryMessage,
   buildStatsMessage,
   buildShownFilesMessage,
   buildClearQueuePrompt,

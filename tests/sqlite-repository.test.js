@@ -15,13 +15,16 @@ function runTests() {
   testPendingManualDownloadQueueIsGlobalAcrossUsers();
   testPendingManualDownloadQueueFallsBackToDocuments();
   testManualDownloadQueueIncludesActiveStatuses();
+  testManualDownloadQueueSummaryIsNotLimited();
   testGetShownToUserFilesReturnsShownRecords();
   testGetStatsAggregatesFiles();
   testGetNextQueuePositionUsesExistingMaximum();
   testMarkFilesAsShownToUserUpdatesPendingRecords();
   testMarkFilesAsDownloadConfirmedUpdatesShownRecords();
   testMarkFilesAsSendFailedStoresError();
+  testMarkFilesDeleteMessageFailedKeepsStatus();
   testMarkActiveQueueAsDeletedByUserKeepsHistory();
+  testCreateFileEventPersistsAuditRecord();
 }
 
 function testCreateRecordPersistsMetadata() {
@@ -194,6 +197,34 @@ function testManualDownloadQueueIncludesActiveStatuses() {
   });
 }
 
+function testManualDownloadQueueSummaryIsNotLimited() {
+  withRepository((repository) => {
+    for (let index = 1; index <= 105; index += 1) {
+      repository.create(createRecord({
+        file_id: `pending-${index}`,
+        file_unique_id: `pending-unique-${index}`,
+        status: 'pending_manual_download',
+        queue_position: index,
+        file_size: 1024 * 1024
+      }));
+    }
+
+    repository.create(createRecord({
+      file_id: 'downloaded-1',
+      file_unique_id: 'downloaded-unique-1',
+      status: 'downloaded',
+      queue_position: null,
+      file_size: 1024 * 1024
+    }));
+
+    const summary = repository.getManualDownloadQueueSummary();
+
+    assert.strictEqual(summary.fileCount, 105);
+    assert.strictEqual(summary.totalKnownSize, 105 * 1024 * 1024);
+    assert.strictEqual(summary.unknownSizeFiles, 0);
+  });
+}
+
 function testGetShownToUserFilesReturnsShownRecords() {
   withRepository((repository) => {
     repository.create(createRecord({
@@ -362,6 +393,26 @@ function testMarkFilesAsSendFailedStoresError() {
   });
 }
 
+function testMarkFilesDeleteMessageFailedKeepsStatus() {
+  withRepository((repository) => {
+    const first = repository.create(createRecord({
+      file_id: 'doc-1',
+      file_unique_id: 'doc-unique-1',
+      file_kind: 'document',
+      queue_position: null,
+      status: 'downloaded'
+    }));
+
+    const updated = repository.markFilesDeleteMessageFailed([first.id], new Error('cannot delete'), '2026-05-16T10:35:00.000Z');
+    const found = repository.findByFileUniqueId('doc-unique-1');
+
+    assert.strictEqual(updated.length, 1);
+    assert.strictEqual(found.status, 'downloaded');
+    assert.strictEqual(found.error_code, 'delete_message_failed');
+    assert.strictEqual(found.error_message, 'cannot delete');
+  });
+}
+
 function testMarkActiveQueueAsDeletedByUserKeepsHistory() {
   withRepository((repository) => {
     repository.create(createRecord({
@@ -391,6 +442,34 @@ function testMarkActiveQueueAsDeletedByUserKeepsHistory() {
       ['deleted_by_user', 'deleted_by_user']
     );
     assert.strictEqual(repository.findByFileUniqueId('downloaded-unique-1').status, 'downloaded');
+  });
+}
+
+function testCreateFileEventPersistsAuditRecord() {
+  withRepository((repository) => {
+    const first = repository.create(createRecord({
+      file_id: 'doc-1',
+      file_unique_id: 'doc-unique-1',
+      file_kind: 'document',
+      queue_position: null,
+      status: 'downloaded'
+    }));
+
+    const event = repository.createFileEvent({
+      file_record_id: first.id,
+      file_unique_id: first.file_unique_id,
+      file_kind: first.file_kind,
+      status: 'downloaded',
+      event_type: 'downloaded',
+      created_at: '2026-05-16T10:45:00.000Z'
+    });
+
+    assert.ok(event.id > 0);
+    assert.strictEqual(event.file_record_id, first.id);
+    assert.strictEqual(event.file_unique_id, 'doc-unique-1');
+    assert.strictEqual(event.file_kind, 'document');
+    assert.strictEqual(event.status, 'downloaded');
+    assert.strictEqual(event.event_type, 'downloaded');
   });
 }
 

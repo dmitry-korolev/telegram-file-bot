@@ -5,6 +5,7 @@ const assert = require('assert');
 const {
   buildShownFilesMessage,
   buildQueueMessage,
+  buildQueueSummaryMessage,
   buildProcessingResponse,
   buildStatsMessage,
   createShowNextFilesKeyboard,
@@ -14,6 +15,7 @@ const {
 function runTests() {
   testCommandMessageDetection();
   testQueueMessageUsesSummaryOnly();
+  testQueueSummaryMessageUsesAggregate();
   testStatsMessage();
   testShowNextKeyboardTextChangesByContext();
   testShownFilesMessageUsesConfirmationText();
@@ -96,6 +98,16 @@ function testQueueMessageUsesSummaryOnly() {
   assert.strictEqual(response.includes('second.bin'), false);
 }
 
+function testQueueSummaryMessageUsesAggregate() {
+  const response = buildQueueSummaryMessage({
+    fileCount: 703,
+    totalKnownSize: 120795.4 * 1024 * 1024,
+    unknownSizeFiles: 0
+  });
+
+  assert.strictEqual(response, 'В очереди файлов: 703. Суммарный объем: 120795.4 МБ.');
+}
+
 function testSingleDownloadedFileMessage() {
   const response = buildProcessingResponse([
     {
@@ -107,7 +119,7 @@ function testSingleDownloadedFileMessage() {
 
   assert.strictEqual(
     response,
-    'Всё, все получил: что смог - скачал, что не смог - положил в очередь. Загружено: 1, в очереди: 0, дубликаты: 0, ошибок: 0.'
+    'Файл "report.pdf" скачан.'
   );
 }
 
@@ -122,7 +134,7 @@ function testMultipleFilesSummary() {
 
   assert.strictEqual(
     response,
-    'Всё, все получил: что смог - скачал, что не смог - положил в очередь. Загружено: 1, в очереди: 2, дубликаты: 1, ошибок: 1.'
+    'Итог: скачано 1, в очереди 2, дубликатов 1, ошибок 1.'
   );
 }
 

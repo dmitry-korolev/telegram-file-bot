@@ -7,6 +7,7 @@ const {
   buildClearQueuePrompt,
   buildProcessingResponse,
   buildQueueMessage,
+  buildQueueSummaryMessage,
   buildStatsMessage,
   buildShownFilesMessage,
   createClearQueueConfirmationKeyboard,
@@ -19,6 +20,7 @@ const CALLBACK_SHOW_NEXT_FILES = 'show_next_files';
 const CALLBACK_CONFIRM_CLEAR_QUEUE = 'confirm_clear_queue';
 const CALLBACK_CANCEL_CLEAR_QUEUE = 'cancel_clear_queue';
 const MANUAL_DOWNLOAD_BATCH_SIZE = 10;
+const DEFAULT_MEDIA_GROUP_RESPONSE_DELAY_MS = 2000;
 
 function createTelegramUpdateHandler(dependencies) {
   const deps = dependencies || {};
@@ -51,6 +53,13 @@ function createTelegramUpdateHandler(dependencies) {
   const smallFileLimitBytes = deps.smallFileLimitBytes || DEFAULT_SMALL_FILE_LIMIT_BYTES;
   const now = deps.now || (() => new Date().toISOString());
   const nextQueuePosition = deps.nextQueuePosition || createInMemoryQueuePosition();
+  const mediaGroupResponseDelayMs = normalizeNonNegativeInteger(
+    deps.mediaGroupResponseDelayMs,
+    DEFAULT_MEDIA_GROUP_RESPONSE_DELAY_MS
+  );
+  const setTimeoutFn = deps.setTimeoutFn || setTimeout;
+  const clearTimeoutFn = deps.clearTimeoutFn || clearTimeout;
+  const mediaGroupResponses = new Map();
 
   return {
     handleUpdate
@@ -116,6 +125,26 @@ function createTelegramUpdateHandler(dependencies) {
       }
     }
 
+    if (deleteMessageError) {
+      await persistDeleteMessageFailure(files, deleteMessageError);
+    }
+
+    if (message.media_group_id) {
+      scheduleMediaGroupResponse(message, files);
+
+      return {
+        accepted: true,
+        reason: processedMessage.reason,
+        files,
+        deleteMessageCalled,
+        deleteMessageError,
+        sendMessageCalled: false,
+        sendMessageError: null,
+        responseDeferred: true,
+        responseText: null
+      };
+    }
+
     const responseText = buildProcessingResponse(files);
     let sendMessageCalled = false;
     let sendMessageError = null;
@@ -175,10 +204,9 @@ function createTelegramUpdateHandler(dependencies) {
     const commandName = getCommandName(message);
 
     if (commandName === '/queue') {
-      const queue = await deps.fileRepository.getManualDownloadQueue({
-        limit: 100
-      });
-      const text = buildQueueMessage(queue);
+      const text = typeof deps.fileRepository.getManualDownloadQueueSummary === 'function'
+        ? buildQueueSummaryMessage(await deps.fileRepository.getManualDownloadQueueSummary())
+        : buildQueueMessage(await deps.fileRepository.getManualDownloadQueue({ limit: 100 }));
 
       await deps.messageSender.sendMessage({
         chatId: message.chat && message.chat.id,
@@ -264,6 +292,7 @@ function createTelegramUpdateHandler(dependencies) {
 
     if (callbackQuery.data === CALLBACK_CONFIRM_CLEAR_QUEUE) {
       const updated = await deps.fileRepository.markActiveQueueAsDeletedByUser(now());
+      await logFileEvents(updated, 'deleted_by_user', 'deleted_by_user');
       const text = buildClearQueueConfirmedMessage(updated.length);
 
       await deps.messageSender.sendMessage({
@@ -314,7 +343,8 @@ function createTelegramUpdateHandler(dependencies) {
     const shownFiles = await deps.fileRepository.getShownToUserFiles();
 
     if (shownFiles.length > 0) {
-      await deps.fileRepository.markFilesAsDownloadConfirmed(shownFiles.map((file) => file.id), timestamp);
+      const confirmed = await deps.fileRepository.markFilesAsDownloadConfirmed(shownFiles.map((file) => file.id), timestamp);
+      await logFileEvents(confirmed, 'download_confirmed', 'download_confirmed');
     }
 
     const queue = await deps.fileRepository.getPendingManualDownloadQueue({
@@ -349,12 +379,14 @@ function createTelegramUpdateHandler(dependencies) {
         sentFiles.push(file);
       } catch (error) {
         failedFiles.push({ file, error });
-        await deps.fileRepository.markFilesAsSendFailed([file.id], error, now());
+        const failed = await deps.fileRepository.markFilesAsSendFailed([file.id], error, now());
+        await logFileEvents(failed.length > 0 ? failed : [file], 'send_failed', 'send_failed', error);
       }
     }
 
     if (sentFiles.length > 0) {
-      await deps.fileRepository.markFilesAsShownToUser(sentFiles.map((file) => file.id), now());
+      const shown = await deps.fileRepository.markFilesAsShownToUser(sentFiles.map((file) => file.id), now());
+      await logFileEvents(shown, 'shown_to_user', 'shown_to_user');
     }
 
     const remainingQueue = await deps.fileRepository.getManualDownloadQueue({
@@ -440,13 +472,16 @@ function createTelegramUpdateHandler(dependencies) {
 
   async function processAttachment(attachment) {
     if (attachment.isDuplicate) {
-      return {
+      const result = {
         fileUniqueId: attachment.file_unique_id,
         fileKind: attachment.file_kind,
         fileName: attachment.file_name,
         status: 'duplicate_skipped',
         record: null
       };
+
+      await logFileEvent(result, 'duplicate_skipped');
+      return result;
     }
 
     if (attachment.sizeCategory === 'small') {
@@ -461,8 +496,36 @@ function createTelegramUpdateHandler(dependencies) {
   }
 
   async function processSmallAttachment(attachment) {
-    const downloaded = await deps.downloader.download(attachment);
     const timestamp = now();
+    let downloaded;
+
+    try {
+      downloaded = await deps.downloader.download(attachment);
+    } catch (error) {
+      const record = await deps.fileRepository.create(buildRecord(attachment, {
+        status: 'download_failed',
+        error_code: 'download_failed',
+        error_message: getErrorMessage(error),
+        local_path: null,
+        queue_position: null,
+        received_at: timestamp,
+        created_at: timestamp,
+        updated_at: timestamp
+      }));
+      const result = {
+        fileUniqueId: attachment.file_unique_id,
+        fileKind: attachment.file_kind,
+        fileName: attachment.file_name,
+        status: 'download_failed',
+        errorCode: 'download_failed',
+        errorMessage: getErrorMessage(error),
+        record
+      };
+
+      await logFileEvent(result, 'download_failed', error);
+      return result;
+    }
+
     const record = await deps.fileRepository.create(buildRecord(attachment, {
       status: 'downloaded',
       local_path: downloaded && downloaded.localPath ? downloaded.localPath : null,
@@ -472,14 +535,16 @@ function createTelegramUpdateHandler(dependencies) {
       created_at: timestamp,
       updated_at: timestamp
     }));
-
-    return {
+    const result = {
       fileUniqueId: attachment.file_unique_id,
       fileKind: attachment.file_kind,
       fileName: attachment.file_name,
       status: 'downloaded',
       record
     };
+
+    await logFileEvent(result, 'downloaded');
+    return result;
   }
 
   async function processLargeAttachment(attachment) {
@@ -492,13 +557,16 @@ function createTelegramUpdateHandler(dependencies) {
       updated_at: timestamp
     }));
 
-    return {
+    const result = {
       fileUniqueId: attachment.file_unique_id,
       fileKind: attachment.file_kind,
       fileName: attachment.file_name,
       status: 'pending_manual_download',
       record
     };
+
+    await logFileEvent(result, 'pending_manual_download');
+    return result;
   }
 
   async function processUnknownSizeAttachment(attachment) {
@@ -511,13 +579,105 @@ function createTelegramUpdateHandler(dependencies) {
       updated_at: timestamp
     }));
 
-    return {
+    const result = {
       fileUniqueId: attachment.file_unique_id,
       fileKind: attachment.file_kind,
       fileName: attachment.file_name,
       status: 'pending_size_unknown',
       record
     };
+
+    await logFileEvent(result, 'pending_size_unknown');
+    return result;
+  }
+
+  async function persistDeleteMessageFailure(files, error) {
+    const recordIds = files
+      .map((file) => file.record && file.record.id)
+      .filter((id) => Number.isInteger(id) && id > 0);
+
+    if (recordIds.length > 0 && typeof deps.fileRepository.markFilesDeleteMessageFailed === 'function') {
+      const updated = await deps.fileRepository.markFilesDeleteMessageFailed(recordIds, error, now());
+      const updatedById = new Map(updated.map((record) => [record.id, record]));
+
+      for (const file of files) {
+        if (file.record && updatedById.has(file.record.id)) {
+          file.record = updatedById.get(file.record.id);
+        }
+      }
+    }
+
+    await Promise.all(files.map((file) => logFileEvent(file, 'delete_message_failed', error)));
+  }
+
+  async function logFileEvents(records, status, eventType, error) {
+    await Promise.all((records || []).map((record) => logFileEvent(toResultFile(record, status), eventType, error)));
+  }
+
+  async function logFileEvent(file, eventType, error) {
+    if (!deps.fileRepository || typeof deps.fileRepository.createFileEvent !== 'function') {
+      return null;
+    }
+
+    const record = file && file.record ? file.record : null;
+    return deps.fileRepository.createFileEvent({
+      file_record_id: record && record.id ? record.id : null,
+      file_unique_id: file && file.fileUniqueId ? file.fileUniqueId : record && record.file_unique_id,
+      file_kind: file && file.fileKind ? file.fileKind : record && record.file_kind,
+      status: file && file.status ? file.status : record && record.status,
+      event_type: eventType,
+      error_code: error ? eventType : file && file.errorCode ? file.errorCode : record && record.error_code,
+      error_message: error ? getErrorMessage(error) : file && file.errorMessage ? file.errorMessage : record && record.error_message,
+      created_at: now()
+    });
+  }
+
+  function scheduleMediaGroupResponse(message, files) {
+    const mediaGroupId = message.media_group_id;
+    const existing = mediaGroupResponses.get(mediaGroupId);
+    const buffer = existing || {
+      chatId: message.chat && message.chat.id,
+      files: [],
+      timeoutId: null
+    };
+
+    buffer.chatId = message.chat && message.chat.id;
+    buffer.files.push(...files);
+
+    if (buffer.timeoutId) {
+      clearTimeoutFn(buffer.timeoutId);
+    }
+
+    buffer.timeoutId = setTimeoutFn(() => {
+      flushMediaGroupResponse(mediaGroupId).catch((error) => {
+        console.error(error.stack || error.message || String(error));
+      });
+    }, mediaGroupResponseDelayMs);
+
+    mediaGroupResponses.set(mediaGroupId, buffer);
+  }
+
+  async function flushMediaGroupResponse(mediaGroupId) {
+    const buffer = mediaGroupResponses.get(mediaGroupId);
+
+    if (!buffer) {
+      return null;
+    }
+
+    mediaGroupResponses.delete(mediaGroupId);
+
+    const responseText = buildProcessingResponse(buffer.files);
+
+    if (!responseText) {
+      return null;
+    }
+
+    await deps.messageSender.sendMessage({
+      chatId: buffer.chatId,
+      text: responseText
+    });
+
+    return responseText;
   }
 
   function buildRecord(attachment, overrides) {
@@ -565,10 +725,19 @@ function createInMemoryQueuePosition() {
   };
 }
 
+function normalizeNonNegativeInteger(value, fallback) {
+  return Number.isInteger(value) && value >= 0 ? value : fallback;
+}
+
+function getErrorMessage(error) {
+  return error && error.message ? error.message : String(error || 'unknown_error');
+}
+
 module.exports = {
   createTelegramUpdateHandler,
   extractMessage,
   createInMemoryQueuePosition,
+  DEFAULT_MEDIA_GROUP_RESPONSE_DELAY_MS,
   CALLBACK_SHOW_NEXT_FILES,
   CALLBACK_CONFIRM_CLEAR_QUEUE,
   CALLBACK_CANCEL_CLEAR_QUEUE
