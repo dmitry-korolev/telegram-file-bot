@@ -16,6 +16,7 @@ function runTests() {
   testPendingManualDownloadQueueFallsBackToDocuments();
   testManualDownloadQueueIncludesActiveStatuses();
   testGetShownToUserFilesReturnsShownRecords();
+  testGetStatsAggregatesFiles();
   testGetNextQueuePositionUsesExistingMaximum();
   testMarkFilesAsShownToUserUpdatesPendingRecords();
   testMarkFilesAsDownloadConfirmedUpdatesShownRecords();
@@ -213,6 +214,57 @@ function testGetShownToUserFilesReturnsShownRecords() {
 
     assert.strictEqual(shown.length, 1);
     assert.strictEqual(shown[0].file_unique_id, 'shown-unique-1');
+  });
+}
+
+function testGetStatsAggregatesFiles() {
+  withRepository((repository) => {
+    repository.create(createRecord({
+      file_id: 'doc-downloaded',
+      file_unique_id: 'doc-downloaded-unique',
+      file_kind: 'document',
+      file_size: 10 * 1024 * 1024,
+      status: 'downloaded',
+      queue_position: null
+    }));
+    repository.create(createRecord({
+      file_id: 'photo-pending',
+      file_unique_id: 'photo-pending-unique',
+      file_kind: 'photo',
+      file_size: 25 * 1024 * 1024,
+      status: 'pending_manual_download',
+      queue_position: 1
+    }));
+    repository.create(createRecord({
+      file_id: 'video-confirmed',
+      file_unique_id: 'video-confirmed-unique',
+      file_kind: 'video',
+      file_size: null,
+      status: 'download_confirmed',
+      queue_position: 2
+    }));
+    repository.create(createRecord({
+      file_id: 'doc-failed',
+      file_unique_id: 'doc-failed-unique',
+      file_kind: 'document',
+      file_size: 3 * 1024 * 1024,
+      status: 'send_failed',
+      queue_position: 3
+    }));
+
+    const stats = repository.getStats();
+
+    assert.strictEqual(stats.totalFiles, 4);
+    assert.strictEqual(stats.totalKnownSize, 38 * 1024 * 1024);
+    assert.strictEqual(stats.unknownSizeFiles, 1);
+    assert.strictEqual(stats.activeQueueFiles, 1);
+    assert.strictEqual(stats.activeQueueKnownSize, 25 * 1024 * 1024);
+    assert.strictEqual(stats.downloadedFiles, 1);
+    assert.strictEqual(stats.downloadConfirmedFiles, 1);
+    assert.strictEqual(stats.failedFiles, 1);
+    assert.strictEqual(stats.documentFiles, 2);
+    assert.strictEqual(stats.photoFiles, 1);
+    assert.strictEqual(stats.videoFiles, 1);
   });
 }
 

@@ -38,7 +38,8 @@ Small files up to `SMALL_FILE_LIMIT_BYTES` are downloaded automatically to `DOWN
 
 Available commands:
 
-- `/queue` — show the shared queue of files waiting for manual download, including queue number, file name, size, and status.
+- `/queue` — show the shared queue summary: file count and total known size.
+- `/stats` — show aggregate bot statistics: total files, known total size, active queue size, downloaded files, confirmed manual downloads, duplicates, errors, and attachment types.
 - `/clear_queue` — ask for confirmation before clearing the shared queue. Confirmed cleanup marks active queue records as `deleted_by_user`.
 
 Available buttons:

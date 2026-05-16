@@ -7,6 +7,7 @@ const {
   buildClearQueuePrompt,
   buildProcessingResponse,
   buildQueueMessage,
+  buildStatsMessage,
   buildShownFilesMessage,
   createClearQueueConfirmationKeyboard,
   createShowNextFilesKeyboard,
@@ -188,6 +189,25 @@ function createTelegramUpdateHandler(dependencies) {
       return {
         accepted: true,
         reason: 'queue_command',
+        files: [],
+        deleteMessageCalled: false,
+        sendMessageCalled: true,
+        responseText: text
+      };
+    }
+
+    if (commandName === '/stats') {
+      const stats = await deps.fileRepository.getStats();
+      const text = buildStatsMessage(stats);
+
+      await deps.messageSender.sendMessage({
+        chatId: message.chat && message.chat.id,
+        text
+      });
+
+      return {
+        accepted: true,
+        reason: 'stats_command',
         files: [],
         deleteMessageCalled: false,
         sendMessageCalled: true,

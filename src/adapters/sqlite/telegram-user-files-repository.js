@@ -14,6 +14,7 @@ function createTelegramUserFilesRepository(sqliteClient) {
     getPendingManualDownloadQueue,
     getManualDownloadQueue,
     getShownToUserFiles,
+    getStats,
     getNextQueuePosition,
     markFilesAsShownToUser,
     markFilesAsDownloadConfirmed,
@@ -172,6 +173,27 @@ function createTelegramUserFilesRepository(sqliteClient) {
       WHERE status = 'shown_to_user'
       ORDER BY shown_at ASC, queue_position ASC, id ASC;
     `);
+  }
+
+  function getStats() {
+    const totals = sqliteClient.query(`
+      SELECT
+        COUNT(*) AS total_files,
+        COALESCE(SUM(CASE WHEN file_size IS NOT NULL THEN file_size ELSE 0 END), 0) AS total_known_size,
+        SUM(CASE WHEN file_size IS NULL THEN 1 ELSE 0 END) AS unknown_size_files,
+        SUM(CASE WHEN status IN ('pending_manual_download', 'pending_size_unknown', 'shown_to_user') THEN 1 ELSE 0 END) AS active_queue_files,
+        COALESCE(SUM(CASE WHEN status IN ('pending_manual_download', 'pending_size_unknown', 'shown_to_user') AND file_size IS NOT NULL THEN file_size ELSE 0 END), 0) AS active_queue_known_size,
+        SUM(CASE WHEN status = 'downloaded' THEN 1 ELSE 0 END) AS downloaded_files,
+        SUM(CASE WHEN status = 'download_confirmed' THEN 1 ELSE 0 END) AS download_confirmed_files,
+        SUM(CASE WHEN status = 'duplicate_skipped' THEN 1 ELSE 0 END) AS duplicate_files,
+        SUM(CASE WHEN status IN ('download_failed', 'send_failed') THEN 1 ELSE 0 END) AS failed_files,
+        SUM(CASE WHEN file_kind = 'document' THEN 1 ELSE 0 END) AS document_files,
+        SUM(CASE WHEN file_kind = 'photo' THEN 1 ELSE 0 END) AS photo_files,
+        SUM(CASE WHEN file_kind = 'video' THEN 1 ELSE 0 END) AS video_files
+      FROM telegram_user_files;
+    `);
+
+    return normalizeStatsRow(totals[0] || {});
   }
 
   function getNextQueuePosition() {
@@ -337,7 +359,29 @@ function isPositiveInteger(value) {
   return Number.isInteger(value) && value > 0;
 }
 
+function normalizeStatsRow(row) {
+  return {
+    totalFiles: normalizeStatNumber(row.total_files),
+    totalKnownSize: normalizeStatNumber(row.total_known_size),
+    unknownSizeFiles: normalizeStatNumber(row.unknown_size_files),
+    activeQueueFiles: normalizeStatNumber(row.active_queue_files),
+    activeQueueKnownSize: normalizeStatNumber(row.active_queue_known_size),
+    downloadedFiles: normalizeStatNumber(row.downloaded_files),
+    downloadConfirmedFiles: normalizeStatNumber(row.download_confirmed_files),
+    duplicateFiles: normalizeStatNumber(row.duplicate_files),
+    failedFiles: normalizeStatNumber(row.failed_files),
+    documentFiles: normalizeStatNumber(row.document_files),
+    photoFiles: normalizeStatNumber(row.photo_files),
+    videoFiles: normalizeStatNumber(row.video_files)
+  };
+}
+
+function normalizeStatNumber(value) {
+  return Number.isFinite(value) ? value : 0;
+}
+
 module.exports = {
   createTelegramUserFilesRepository,
-  normalizeCreateRecord
+  normalizeCreateRecord,
+  normalizeStatsRow
 };

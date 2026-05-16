@@ -6,6 +6,7 @@ const {
   buildShownFilesMessage,
   buildQueueMessage,
   buildProcessingResponse,
+  buildStatsMessage,
   createShowNextFilesKeyboard,
   isCommandMessage
 } = require('../src/domain/user-messages');
@@ -13,10 +14,32 @@ const {
 function runTests() {
   testCommandMessageDetection();
   testQueueMessageUsesSummaryOnly();
+  testStatsMessage();
   testShowNextKeyboardTextChangesByContext();
   testShownFilesMessageUsesConfirmationText();
   testSingleDownloadedFileMessage();
   testMultipleFilesSummary();
+}
+
+function testStatsMessage() {
+  const response = buildStatsMessage({
+    totalFiles: 4,
+    totalKnownSize: 38 * 1024 * 1024,
+    activeQueueFiles: 1,
+    activeQueueKnownSize: 25 * 1024 * 1024,
+    downloadedFiles: 1,
+    downloadConfirmedFiles: 1,
+    duplicateFiles: 0,
+    failedFiles: 1,
+    documentFiles: 2,
+    photoFiles: 1,
+    videoFiles: 1,
+    unknownSizeFiles: 1
+  });
+
+  assert.strictEqual(response.includes('Всего файлов: 4'), true);
+  assert.strictEqual(response.includes('Активная очередь: 1 файлов, 25.0 МБ'), true);
+  assert.strictEqual(response.includes('Ошибок: 1'), true);
 }
 
 function testCommandMessageDetection() {
@@ -82,7 +105,10 @@ function testSingleDownloadedFileMessage() {
     }
   ]);
 
-  assert.strictEqual(response, 'Файл "report.pdf" получен и загружен.');
+  assert.strictEqual(
+    response,
+    'Всё, все получил: что смог - скачал, что не смог - положил в очередь. Загружено: 1, в очереди: 0, дубликаты: 0, ошибок: 0.'
+  );
 }
 
 function testMultipleFilesSummary() {
@@ -96,7 +122,7 @@ function testMultipleFilesSummary() {
 
   assert.strictEqual(
     response,
-    'Обработка завершена: загружено - 1, добавлено в очередь - 2, пропущено как дубликаты - 1, ошибок - 1.'
+    'Всё, все получил: что смог - скачал, что не смог - положил в очередь. Загружено: 1, в очереди: 2, дубликаты: 1, ошибок: 1.'
   );
 }
 

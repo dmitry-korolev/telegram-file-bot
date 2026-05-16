@@ -69,6 +69,23 @@ function buildQueueMessage(files) {
   return `В очереди файлов: ${normalizedFiles.length}. Суммарный объем: ${formatFileSize(totalSize)}${unknownSizeText}.`;
 }
 
+function buildStatsMessage(stats) {
+  const normalizedStats = stats || {};
+
+  return [
+    'Статистика бота:',
+    `Всего файлов: ${normalizedStats.totalFiles || 0}`,
+    `Общий известный объем: ${formatFileSize(normalizedStats.totalKnownSize || 0)}`,
+    `Активная очередь: ${normalizedStats.activeQueueFiles || 0} файлов, ${formatFileSize(normalizedStats.activeQueueKnownSize || 0)}`,
+    `Скачано автоматически: ${normalizedStats.downloadedFiles || 0}`,
+    `Подтверждено ручных скачиваний: ${normalizedStats.downloadConfirmedFiles || 0}`,
+    `Дубликатов пропущено: ${normalizedStats.duplicateFiles || 0}`,
+    `Ошибок: ${normalizedStats.failedFiles || 0}`,
+    `Типы: documents - ${normalizedStats.documentFiles || 0}, photos - ${normalizedStats.photoFiles || 0}, videos - ${normalizedStats.videoFiles || 0}`,
+    `Файлов с неизвестным размером: ${normalizedStats.unknownSizeFiles || 0}`
+  ].join('\n');
+}
+
 function buildShownFilesMessage(shownCount, remainingCount) {
   if (shownCount === 0) {
     return remainingCount > 0 ? 'Не удалось показать файлы из очереди.' : 'Больше файлов в очереди нет.';
@@ -96,13 +113,9 @@ function buildProcessingResponse(files) {
     return null;
   }
 
-  if (normalizedFiles.length === 1) {
-    return buildSingleFileResponse(normalizedFiles[0]);
-  }
-
   const counts = countFileStatuses(normalizedFiles);
 
-  return `Обработка завершена: загружено - ${counts.downloaded}, добавлено в очередь - ${counts.queued}, пропущено как дубликаты - ${counts.duplicates}, ошибок - ${counts.errors}.`;
+  return `Всё, все получил: что смог - скачал, что не смог - положил в очередь. Загружено: ${counts.downloaded}, в очереди: ${counts.queued}, дубликаты: ${counts.duplicates}, ошибок: ${counts.errors}.`;
 }
 
 function buildSingleFileResponse(file) {
@@ -184,6 +197,7 @@ module.exports = {
   createShowNextFilesKeyboard,
   createClearQueueConfirmationKeyboard,
   buildQueueMessage,
+  buildStatsMessage,
   buildShownFilesMessage,
   buildClearQueuePrompt,
   buildClearQueueConfirmedMessage,

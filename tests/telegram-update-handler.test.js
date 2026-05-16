@@ -23,6 +23,7 @@ async function runTests() {
   await testProcessingSendsSingleFileResponse();
   await testProcessingSendsMultipleFilesSummary();
   await testQueueCommandShowsQueue();
+  await testStatsCommandShowsAggregateStats();
   await testClearQueueCommandRequestsConfirmation();
   await testConfirmClearQueueMarksRecordsDeleted();
   await testUnauthorizedCallbackIsIgnored();
@@ -30,6 +31,36 @@ async function runTests() {
   await testShowNextFilesConfirmsPreviouslyShownFirst();
   await testShowNextFilesReportsEmptyQueue();
   await testSendFailureMarksOnlyFailedFile();
+}
+
+async function testStatsCommandShowsAggregateStats() {
+  const deps = createMockDependencies({
+    stats: {
+      totalFiles: 4,
+      totalKnownSize: 38 * 1024 * 1024,
+      activeQueueFiles: 1,
+      activeQueueKnownSize: 25 * 1024 * 1024,
+      downloadedFiles: 1,
+      downloadConfirmedFiles: 1,
+      duplicateFiles: 0,
+      failedFiles: 1,
+      documentFiles: 2,
+      photoFiles: 1,
+      videoFiles: 1,
+      unknownSizeFiles: 1
+    }
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 19,
+    message: createMessage({ text: '/stats' })
+  });
+
+  assert.strictEqual(result.reason, 'stats_command');
+  assert.strictEqual(deps.messageSender.calls.length, 1);
+  assert.strictEqual(deps.messageSender.calls[0].text.includes('Статистика бота:'), true);
+  assert.strictEqual(deps.messageSender.calls[0].text.includes('Всего файлов: 4'), true);
 }
 
 async function testExtractsSupportedAttachmentsAndIgnoresUnsupported() {
@@ -127,7 +158,10 @@ async function testSmallFilesUseDownloaderAndDownloadedRecord() {
   assert.strictEqual(deps.fileRepository.records[0].queue_position, null);
   assert.strictEqual(deps.messageDeleter.calls.length, 1);
   assert.strictEqual(deps.messageSender.calls.length, 1);
-  assert.strictEqual(deps.messageSender.calls[0].text, 'Файл "file" получен и загружен.');
+  assert.strictEqual(
+    deps.messageSender.calls[0].text,
+    'Всё, все получил: что смог - скачал, что не смог - положил в очередь. Загружено: 1, в очереди: 0, дубликаты: 0, ошибок: 0.'
+  );
 }
 
 async function testLargeFilesAreQueuedWithoutDownloader() {
@@ -149,7 +183,7 @@ async function testLargeFilesAreQueuedWithoutDownloader() {
   assert.strictEqual(deps.messageSender.calls.length, 1);
   assert.strictEqual(
     deps.messageSender.calls[0].text,
-    'Файл "video" больше 20 МБ. Я не могу скачать его автоматически через Telegram Bot API, поэтому добавил его в очередь ручного скачивания.'
+    'Всё, все получил: что смог - скачал, что не смог - положил в очередь. Загружено: 0, в очереди: 1, дубликаты: 0, ошибок: 0.'
   );
 }
 
@@ -173,7 +207,7 @@ async function testDuplicateFilesAreSkipped() {
   assert.strictEqual(deps.messageSender.calls.length, 1);
   assert.strictEqual(
     deps.messageSender.calls[0].text,
-    'Файл "file" уже был получен раньше, поэтому я не стал обрабатывать его повторно.'
+    'Всё, все получил: что смог - скачал, что не смог - положил в очередь. Загружено: 0, в очереди: 0, дубликаты: 1, ошибок: 0.'
   );
 }
 
@@ -246,7 +280,10 @@ async function testProcessingSendsSingleFileResponse() {
   assert.strictEqual(result.sendMessageCalled, true);
   assert.strictEqual(deps.messageSender.calls.length, 1);
   assert.strictEqual(deps.messageSender.calls[0].chatId, 5001);
-  assert.strictEqual(deps.messageSender.calls[0].text, 'Файл "report.pdf" получен и загружен.');
+  assert.strictEqual(
+    deps.messageSender.calls[0].text,
+    'Всё, все получил: что смог - скачал, что не смог - положил в очередь. Загружено: 1, в очереди: 0, дубликаты: 0, ошибок: 0.'
+  );
 }
 
 async function testProcessingSendsMultipleFilesSummary() {
@@ -269,7 +306,7 @@ async function testProcessingSendsMultipleFilesSummary() {
   assert.strictEqual(result.sendMessageCalled, true);
   assert.strictEqual(
     deps.messageSender.calls[0].text,
-    'Обработка завершена: загружено - 1, добавлено в очередь - 1, пропущено как дубликаты - 1, ошибок - 0.'
+    'Всё, все получил: что смог - скачал, что не смог - положил в очередь. Загружено: 1, в очереди: 1, дубликаты: 1, ошибок: 0.'
   );
 }
 
@@ -471,6 +508,22 @@ function createMockDependencies(options) {
     },
     async getShownToUserFiles() {
       return this.shownQueue;
+    },
+    async getStats() {
+      return normalizedOptions.stats || {
+        totalFiles: 0,
+        totalKnownSize: 0,
+        activeQueueFiles: 0,
+        activeQueueKnownSize: 0,
+        downloadedFiles: 0,
+        downloadConfirmedFiles: 0,
+        duplicateFiles: 0,
+        failedFiles: 0,
+        documentFiles: 0,
+        photoFiles: 0,
+        videoFiles: 0,
+        unknownSizeFiles: 0
+      };
     },
     async markFilesAsShownToUser(recordIds) {
       this.shownIds.push(...recordIds);
