@@ -1,0 +1,625 @@
+'use strict';
+
+const assert = require('assert');
+
+const {
+  CALLBACK_CANCEL_CLEAR_QUEUE,
+  CALLBACK_CONFIRM_CLEAR_QUEUE,
+  CALLBACK_SHOW_NEXT_FILES,
+  createTelegramUpdateHandler
+} = require('../src/application/telegram-update-handler');
+const { DEFAULT_SMALL_FILE_LIMIT_BYTES } = require('../src/domain/file-size');
+
+async function runTests() {
+  await testExtractsSupportedAttachmentsAndIgnoresUnsupported();
+  await testIgnoresUnauthorizedMessages();
+  await testSecondAuthorizedUserIsAccepted();
+  await testSmallFilesUseDownloaderAndDownloadedRecord();
+  await testLargeFilesAreQueuedWithoutDownloader();
+  await testDuplicateFilesAreSkipped();
+  await testUnknownSizeFilesUseManualQueueStatus();
+  await testTextMessageWithoutAttachmentsIsDeleted();
+  await testCommandMessageWithoutAttachmentsIsNotDeleted();
+  await testProcessingSendsSingleFileResponse();
+  await testProcessingSendsMultipleFilesSummary();
+  await testQueueCommandShowsQueue();
+  await testClearQueueCommandRequestsConfirmation();
+  await testConfirmClearQueueMarksRecordsDeleted();
+  await testUnauthorizedCallbackIsIgnored();
+  await testShowNextFilesSendsAtMostTenAndMarksShown();
+  await testShowNextFilesConfirmsPreviouslyShownFirst();
+  await testShowNextFilesReportsEmptyQueue();
+  await testSendFailureMarksOnlyFailedFile();
+}
+
+async function testExtractsSupportedAttachmentsAndIgnoresUnsupported() {
+  const deps = createMockDependencies();
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 1,
+    message: createMessage({
+      document: createTelegramFile('doc-small', 'uniq-doc-small', 1024, {
+        file_name: 'small.txt',
+        mime_type: 'text/plain'
+      }),
+      photo: [
+        createTelegramFile('photo-small-low', 'uniq-photo-low', 1000),
+        createTelegramFile('photo-small-high', 'uniq-photo-high', 3000)
+      ],
+      video: createTelegramFile('video-large', 'uniq-video-large', DEFAULT_SMALL_FILE_LIMIT_BYTES + 1),
+      audio: createTelegramFile('audio-ignored', 'uniq-audio', 1024),
+      voice: createTelegramFile('voice-ignored', 'uniq-voice', 1024),
+      sticker: createTelegramFile('sticker-ignored', 'uniq-sticker', 1024),
+      animation: createTelegramFile('animation-ignored', 'uniq-animation', 1024)
+    })
+  });
+
+  assert.strictEqual(result.accepted, true);
+  assert.deepStrictEqual(
+    result.files.map((file) => file.fileKind),
+    ['document', 'photo', 'video']
+  );
+  assert.deepStrictEqual(
+    deps.downloader.calls.map((attachment) => attachment.file_id),
+    ['doc-small', 'photo-small-high']
+  );
+  assert.deepStrictEqual(
+    deps.fileRepository.records.map((record) => record.file_unique_id),
+    ['uniq-doc-small', 'uniq-photo-high', 'uniq-video-large']
+  );
+  assert.strictEqual(deps.messageDeleter.calls.length, 1);
+  assert.strictEqual(deps.messageSender.calls.length, 1);
+}
+
+async function testIgnoresUnauthorizedMessages() {
+  const deps = createMockDependencies();
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 2,
+    message: createMessage({
+      from: { id: 999 },
+      document: createTelegramFile('doc-small', 'uniq-doc-small', 1024)
+    })
+  });
+
+  assert.strictEqual(result.accepted, false);
+  assert.strictEqual(result.reason, 'unauthorized_user');
+  assert.deepStrictEqual(deps.downloader.calls, []);
+  assert.deepStrictEqual(deps.fileRepository.records, []);
+  assert.deepStrictEqual(deps.messageDeleter.calls, []);
+  assert.deepStrictEqual(deps.messageSender.calls, []);
+}
+
+async function testSecondAuthorizedUserIsAccepted() {
+  const deps = createMockDependencies();
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 20,
+    message: createMessage({
+      from: { id: 77 },
+      document: createTelegramFile('doc-small', 'uniq-doc-small-77', 1024)
+    })
+  });
+
+  assert.strictEqual(result.accepted, true);
+  assert.strictEqual(deps.fileRepository.records[0].authorized_user_id, 77);
+}
+
+async function testSmallFilesUseDownloaderAndDownloadedRecord() {
+  const deps = createMockDependencies();
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 3,
+    message: createMessage({
+      document: createTelegramFile('doc-small', 'uniq-doc-small', DEFAULT_SMALL_FILE_LIMIT_BYTES)
+    })
+  });
+
+  assert.strictEqual(deps.downloader.calls.length, 1);
+  assert.strictEqual(deps.downloader.calls[0].file_unique_id, 'uniq-doc-small');
+  assert.strictEqual(result.files[0].status, 'downloaded');
+  assert.strictEqual(deps.fileRepository.records[0].status, 'downloaded');
+  assert.strictEqual(deps.fileRepository.records[0].local_path, '/tmp/doc-small');
+  assert.strictEqual(deps.fileRepository.records[0].queue_position, null);
+  assert.strictEqual(deps.messageDeleter.calls.length, 1);
+  assert.strictEqual(deps.messageSender.calls.length, 1);
+  assert.strictEqual(deps.messageSender.calls[0].text, 'Файл "file" получен и загружен.');
+}
+
+async function testLargeFilesAreQueuedWithoutDownloader() {
+  const deps = createMockDependencies();
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 4,
+    message: createMessage({
+      video: createTelegramFile('video-large', 'uniq-video-large', DEFAULT_SMALL_FILE_LIMIT_BYTES + 1)
+    })
+  });
+
+  assert.deepStrictEqual(deps.downloader.calls, []);
+  assert.strictEqual(result.files[0].status, 'pending_manual_download');
+  assert.strictEqual(deps.fileRepository.records[0].status, 'pending_manual_download');
+  assert.strictEqual(deps.fileRepository.records[0].queue_position, 1);
+  assert.strictEqual(deps.messageDeleter.calls.length, 1);
+  assert.strictEqual(deps.messageSender.calls.length, 1);
+  assert.strictEqual(
+    deps.messageSender.calls[0].text,
+    'Файл "video" больше 20 МБ. Я не могу скачать его автоматически через Telegram Bot API, поэтому добавил его в очередь ручного скачивания.'
+  );
+}
+
+async function testDuplicateFilesAreSkipped() {
+  const deps = createMockDependencies({
+    existingFileUniqueIds: ['uniq-duplicate']
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 5,
+    message: createMessage({
+      document: createTelegramFile('doc-duplicate', 'uniq-duplicate', 1024)
+    })
+  });
+
+  assert.strictEqual(result.files[0].status, 'duplicate_skipped');
+  assert.deepStrictEqual(deps.downloader.calls, []);
+  assert.deepStrictEqual(deps.fileRepository.records, []);
+  assert.strictEqual(deps.messageDeleter.calls.length, 1);
+  assert.strictEqual(deps.messageSender.calls.length, 1);
+  assert.strictEqual(
+    deps.messageSender.calls[0].text,
+    'Файл "file" уже был получен раньше, поэтому я не стал обрабатывать его повторно.'
+  );
+}
+
+async function testUnknownSizeFilesUseManualQueueStatus() {
+  const deps = createMockDependencies();
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 6,
+    message: createMessage({
+      document: createTelegramFile('doc-unknown', 'uniq-doc-unknown', undefined)
+    })
+  });
+
+  assert.deepStrictEqual(deps.downloader.calls, []);
+  assert.strictEqual(result.files[0].status, 'pending_size_unknown');
+  assert.strictEqual(deps.fileRepository.records[0].status, 'pending_size_unknown');
+  assert.strictEqual(deps.fileRepository.records[0].queue_position, 1);
+  assert.strictEqual(deps.messageDeleter.calls.length, 1);
+  assert.strictEqual(deps.messageSender.calls.length, 1);
+}
+
+async function testTextMessageWithoutAttachmentsIsDeleted() {
+  const deps = createMockDependencies();
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 7,
+    message: createMessage({
+      text: 'hello'
+    })
+  });
+
+  assert.strictEqual(result.reason, 'no_supported_attachments_deleted');
+  assert.strictEqual(result.deleteMessageCalled, true);
+  assert.strictEqual(deps.messageDeleter.calls.length, 1);
+  assert.deepStrictEqual(deps.messageSender.calls, []);
+}
+
+async function testCommandMessageWithoutAttachmentsIsNotDeleted() {
+  const deps = createMockDependencies();
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 8,
+    message: createMessage({
+      text: '/queue'
+    })
+  });
+
+  assert.strictEqual(result.reason, 'queue_command');
+  assert.strictEqual(result.deleteMessageCalled, false);
+  assert.deepStrictEqual(deps.messageDeleter.calls, []);
+  assert.strictEqual(deps.messageSender.calls.length, 1);
+}
+
+async function testProcessingSendsSingleFileResponse() {
+  const deps = createMockDependencies();
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 9,
+    message: createMessage({
+      document: createTelegramFile('doc-small', 'uniq-doc-small', 1024, {
+        file_name: 'report.pdf'
+      })
+    })
+  });
+
+  assert.strictEqual(result.sendMessageCalled, true);
+  assert.strictEqual(deps.messageSender.calls.length, 1);
+  assert.strictEqual(deps.messageSender.calls[0].chatId, 5001);
+  assert.strictEqual(deps.messageSender.calls[0].text, 'Файл "report.pdf" получен и загружен.');
+}
+
+async function testProcessingSendsMultipleFilesSummary() {
+  const deps = createMockDependencies({
+    existingFileUniqueIds: ['uniq-duplicate']
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 10,
+    message: createMessage({
+      document: createTelegramFile('doc-small', 'uniq-doc-small', 1024),
+      video: createTelegramFile('video-large', 'uniq-video-large', DEFAULT_SMALL_FILE_LIMIT_BYTES + 1),
+      photo: [
+        createTelegramFile('photo-duplicate', 'uniq-duplicate', 1024)
+      ]
+    })
+  });
+
+  assert.strictEqual(result.sendMessageCalled, true);
+  assert.strictEqual(
+    deps.messageSender.calls[0].text,
+    'Обработка завершена: загружено - 1, добавлено в очередь - 1, пропущено как дубликаты - 1, ошибок - 0.'
+  );
+}
+
+async function testQueueCommandShowsQueue() {
+  const deps = createMockDependencies({
+    manualQueue: [
+      createRepositoryRecord({ queue_position: 1, file_name: 'big-video.mp4', file_size: 25 * 1024 * 1024, status: 'pending_manual_download' })
+    ]
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 11,
+    message: createMessage({ text: '/queue' })
+  });
+
+  assert.strictEqual(result.reason, 'queue_command');
+  assert.strictEqual(deps.messageSender.calls.length, 1);
+  assert.strictEqual(deps.messageSender.calls[0].text, 'В очереди файлов: 1. Суммарный объем: 25.0 МБ.');
+  assert.deepStrictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].callback_data, CALLBACK_SHOW_NEXT_FILES);
+}
+
+async function testClearQueueCommandRequestsConfirmation() {
+  const deps = createMockDependencies();
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 12,
+    message: createMessage({ text: '/clear_queue' })
+  });
+
+  assert.strictEqual(result.reason, 'clear_queue_command');
+  assert.strictEqual(deps.messageSender.calls.length, 1);
+  assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].callback_data, CALLBACK_CONFIRM_CLEAR_QUEUE);
+  assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][1].callback_data, CALLBACK_CANCEL_CLEAR_QUEUE);
+}
+
+async function testConfirmClearQueueMarksRecordsDeleted() {
+  const deps = createMockDependencies({
+    manualQueue: [
+      createRepositoryRecord({ id: 1, status: 'pending_manual_download' }),
+      createRepositoryRecord({ id: 2, status: 'shown_to_user' })
+    ]
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 13,
+    callback_query: createCallbackQuery(CALLBACK_CONFIRM_CLEAR_QUEUE)
+  });
+
+  assert.strictEqual(result.reason, 'clear_queue_confirmed');
+  assert.strictEqual(deps.callbackResponder.calls.length, 1);
+  assert.strictEqual(deps.fileRepository.deletedRecords.length, 2);
+  assert.strictEqual(deps.messageSender.calls[0].text, 'Очередь очищена. Записей обновлено: 2.');
+}
+
+async function testUnauthorizedCallbackIsIgnored() {
+  const deps = createMockDependencies();
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 14,
+    callback_query: createCallbackQuery(CALLBACK_SHOW_NEXT_FILES, { from: { id: 999 } })
+  });
+
+  assert.strictEqual(result.accepted, false);
+  assert.strictEqual(result.reason, 'unauthorized_callback');
+  assert.deepStrictEqual(deps.callbackResponder.calls, []);
+  assert.deepStrictEqual(deps.fileSender.calls, []);
+}
+
+async function testShowNextFilesSendsAtMostTenAndMarksShown() {
+  const pendingQueue = [];
+
+  for (let index = 1; index <= 12; index += 1) {
+    pendingQueue.push(createRepositoryRecord({
+      id: index,
+      file_kind: index === 1 ? 'document' : 'photo',
+      queue_position: index,
+      file_id: `file-${index}`,
+      file_unique_id: `unique-${index}`
+    }));
+  }
+
+  const deps = createMockDependencies({ pendingQueue });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 15,
+    callback_query: createCallbackQuery(CALLBACK_SHOW_NEXT_FILES)
+  });
+
+  assert.strictEqual(result.reason, 'manual_download_batch_shown');
+  assert.strictEqual(deps.fileSender.calls.length, 10);
+  assert.strictEqual(deps.fileRepository.shownIds.length, 10);
+  assert.strictEqual(deps.fileSender.calls[0].method, 'sendPhoto');
+  assert.strictEqual(deps.fileSender.calls.some((call) => call.method === 'sendDocument'), false);
+  assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].callback_data, CALLBACK_SHOW_NEXT_FILES);
+  assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].text, 'Подтвердить скачивание и показать следующие');
+}
+
+async function testShowNextFilesConfirmsPreviouslyShownFirst() {
+  const deps = createMockDependencies({
+    shownQueue: [
+      createRepositoryRecord({ id: 20, status: 'shown_to_user' })
+    ],
+    pendingQueue: [
+      createRepositoryRecord({ id: 21, file_kind: 'document', status: 'pending_manual_download' })
+    ]
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 16,
+    callback_query: createCallbackQuery(CALLBACK_SHOW_NEXT_FILES)
+  });
+
+  assert.strictEqual(result.confirmedCount, 1);
+  assert.deepStrictEqual(deps.fileRepository.confirmedIds, [20]);
+  assert.deepStrictEqual(deps.fileRepository.shownIds, [21]);
+  assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].text, 'Подтвердить скачивание');
+}
+
+async function testShowNextFilesReportsEmptyQueue() {
+  const deps = createMockDependencies();
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 17,
+    callback_query: createCallbackQuery(CALLBACK_SHOW_NEXT_FILES)
+  });
+
+  assert.strictEqual(result.reason, 'manual_download_queue_empty');
+  assert.strictEqual(deps.messageSender.calls[0].text, 'В очереди нет файлов для ручного скачивания.');
+  assert.deepStrictEqual(deps.fileSender.calls, []);
+}
+
+async function testSendFailureMarksOnlyFailedFile() {
+  const deps = createMockDependencies({
+    pendingQueue: [
+      createRepositoryRecord({ id: 30, file_id: 'ok-file', file_unique_id: 'ok-unique', file_kind: 'photo' }),
+      createRepositoryRecord({ id: 31, file_id: 'bad-file', file_unique_id: 'bad-unique', file_kind: 'video' })
+    ],
+    failingFileIds: ['bad-file']
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 18,
+    callback_query: createCallbackQuery(CALLBACK_SHOW_NEXT_FILES)
+  });
+
+  assert.deepStrictEqual(deps.fileRepository.shownIds, [30]);
+  assert.deepStrictEqual(deps.fileRepository.sendFailedIds, [31]);
+  assert.strictEqual(result.failedFiles.length, 1);
+  assert.strictEqual(result.files.length, 1);
+}
+
+function createMockDependencies(options) {
+  const normalizedOptions = options || {};
+  const existingFileUniqueIds = new Set(normalizedOptions.existingFileUniqueIds || []);
+  const failingFileIds = new Set(normalizedOptions.failingFileIds || []);
+  let queuePosition = 0;
+
+  const fileRepository = {
+    records: [],
+    pendingQueue: normalizedOptions.pendingQueue || [],
+    manualQueue: normalizedOptions.manualQueue || normalizedOptions.pendingQueue || [],
+    shownQueue: normalizedOptions.shownQueue || [],
+    shownIds: [],
+    confirmedIds: [],
+    sendFailedIds: [],
+    deletedRecords: [],
+    async findByFileUniqueId(fileUniqueId) {
+      if (existingFileUniqueIds.has(fileUniqueId)) {
+        return { id: 9001, file_unique_id: fileUniqueId };
+      }
+
+      return this.records.find((record) => record.file_unique_id === fileUniqueId) || null;
+    },
+    async create(record) {
+      const created = Object.assign({ id: this.records.length + 1 }, record);
+      this.records.push(created);
+      return created;
+    },
+    async getManualDownloadQueue() {
+      return this.manualQueue.filter((record) => record.status !== 'deleted_by_user');
+    },
+    async getPendingManualDownloadQueue(options) {
+      const limit = options && options.limit ? options.limit : 10;
+      const media = this.pendingQueue.filter((record) => record.status === 'pending_manual_download' && ['photo', 'video'].includes(record.file_kind));
+
+      if (media.length > 0) {
+        return media.slice(0, limit);
+      }
+
+      return this.pendingQueue.filter((record) => record.status === 'pending_manual_download' && record.file_kind === 'document').slice(0, limit);
+    },
+    async getShownToUserFiles() {
+      return this.shownQueue;
+    },
+    async markFilesAsShownToUser(recordIds) {
+      this.shownIds.push(...recordIds);
+      this.pendingQueue = this.pendingQueue.map((record) => (
+        recordIds.includes(record.id) ? Object.assign({}, record, { status: 'shown_to_user' }) : record
+      ));
+      this.manualQueue = this.manualQueue.map((record) => (
+        recordIds.includes(record.id) ? Object.assign({}, record, { status: 'shown_to_user' }) : record
+      ));
+      return recordIds.map((id) => Object.assign({}, this.pendingQueue.find((record) => record.id === id), { id, status: 'shown_to_user' }));
+    },
+    async markFilesAsDownloadConfirmed(recordIds) {
+      this.confirmedIds.push(...recordIds);
+      return recordIds.map((id) => ({ id, status: 'download_confirmed' }));
+    },
+    async markFilesAsSendFailed(recordIds) {
+      this.sendFailedIds.push(...recordIds);
+      return recordIds.map((id) => ({ id, status: 'send_failed' }));
+    },
+    async markActiveQueueAsDeletedByUser() {
+      this.deletedRecords = this.manualQueue.filter((record) => ['pending_manual_download', 'pending_size_unknown', 'shown_to_user'].includes(record.status));
+      this.manualQueue = this.manualQueue.map((record) => (
+        this.deletedRecords.includes(record) ? Object.assign({}, record, { status: 'deleted_by_user' }) : record
+      ));
+      return this.deletedRecords;
+    }
+  };
+
+  const downloader = {
+    calls: [],
+    async download(attachment) {
+      this.calls.push(attachment);
+      return { localPath: `/tmp/${attachment.file_id}` };
+    }
+  };
+
+  const messageDeleter = {
+    calls: [],
+    async deleteMessage(payload) {
+      this.calls.push(payload);
+    }
+  };
+
+  const messageSender = {
+    calls: [],
+    async sendMessage(payload) {
+      this.calls.push(payload);
+    }
+  };
+
+  const fileSender = {
+    calls: [],
+    async sendPhoto(payload) {
+      failIfConfigured(payload.fileId);
+      this.calls.push(Object.assign({ method: 'sendPhoto' }, payload));
+    },
+    async sendVideo(payload) {
+      failIfConfigured(payload.fileId);
+      this.calls.push(Object.assign({ method: 'sendVideo' }, payload));
+    },
+    async sendDocument(payload) {
+      failIfConfigured(payload.fileId);
+      this.calls.push(Object.assign({ method: 'sendDocument' }, payload));
+    }
+  };
+
+  const callbackResponder = {
+    calls: [],
+    async answerCallbackQuery(payload) {
+      this.calls.push(payload);
+    }
+  };
+
+  return {
+    authorizedUserIds: [42, 77],
+    smallFileLimitBytes: DEFAULT_SMALL_FILE_LIMIT_BYTES,
+    fileRepository,
+    downloader,
+    messageDeleter,
+    messageSender,
+    fileSender,
+    callbackResponder,
+    nextQueuePosition: async () => {
+      queuePosition += 1;
+      return queuePosition;
+    },
+    now: () => '2026-05-16T10:00:00.000Z'
+  };
+
+  function failIfConfigured(fileId) {
+    if (failingFileIds.has(fileId)) {
+      throw new Error(`Cannot send ${fileId}`);
+    }
+  }
+}
+
+function createMessage(overrides) {
+  return Object.assign({
+    message_id: 1001,
+    media_group_id: 'media-group-1',
+    chat: { id: 5001 },
+    from: { id: 42 }
+  }, overrides || {});
+}
+
+function createTelegramFile(fileId, fileUniqueId, fileSize, overrides) {
+  const file = Object.assign({
+    file_id: fileId,
+    file_unique_id: fileUniqueId
+  }, overrides || {});
+
+  if (fileSize !== undefined) {
+    file.file_size = fileSize;
+  }
+
+  return file;
+}
+
+function createCallbackQuery(data, overrides) {
+  return Object.assign({
+    id: `callback-${data}`,
+    from: { id: 42 },
+    data,
+    message: {
+      message_id: 2001,
+      chat: { id: 5001 }
+    }
+  }, overrides || {});
+}
+
+function createRepositoryRecord(overrides) {
+  return Object.assign({
+    id: 1,
+    authorized_user_id: 42,
+    chat_id: 5001,
+    message_id: 1001,
+    file_id: 'repo-file-1',
+    file_unique_id: 'repo-unique-1',
+    file_name: 'file.bin',
+    mime_type: 'application/octet-stream',
+    file_size: 25 * 1024 * 1024,
+    file_kind: 'document',
+    deduplication_key: 'repo-unique-1',
+    queue_position: 1,
+    status: 'pending_manual_download',
+    received_at: '2026-05-16T10:00:00.000Z'
+  }, overrides || {});
+}
+
+module.exports = {
+  runTests
+};

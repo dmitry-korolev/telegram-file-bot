@@ -1,0 +1,343 @@
+'use strict';
+
+const { toSqlValue } = require('./sqlite-client');
+
+function createTelegramUserFilesRepository(sqliteClient) {
+  if (!sqliteClient || typeof sqliteClient.query !== 'function' || typeof sqliteClient.execute !== 'function') {
+    throw new Error('A sqlite client with execute/query methods is required');
+  }
+
+  return {
+    initializeSchema,
+    create,
+    findByFileUniqueId,
+    getPendingManualDownloadQueue,
+    getManualDownloadQueue,
+    getShownToUserFiles,
+    getNextQueuePosition,
+    markFilesAsShownToUser,
+    markFilesAsDownloadConfirmed,
+    markFilesAsSendFailed,
+    markActiveQueueAsDeletedByUser
+  };
+
+  function initializeSchema() {
+    sqliteClient.execute(`
+      CREATE TABLE IF NOT EXISTS telegram_user_files (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        authorized_user_id INTEGER NOT NULL,
+        chat_id INTEGER NOT NULL,
+        message_id INTEGER NOT NULL,
+        media_group_id TEXT,
+        file_id TEXT NOT NULL,
+        file_unique_id TEXT NOT NULL,
+        file_name TEXT,
+        mime_type TEXT,
+        file_size INTEGER,
+        file_kind TEXT NOT NULL,
+        deduplication_key TEXT NOT NULL,
+        local_path TEXT,
+        queue_position INTEGER,
+        status TEXT NOT NULL,
+        error_code TEXT,
+        error_message TEXT,
+        received_at TEXT NOT NULL,
+        downloaded_at TEXT,
+        shown_at TEXT,
+        download_confirmed_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_telegram_user_files_file_unique_id
+      ON telegram_user_files (file_unique_id);
+
+      CREATE INDEX IF NOT EXISTS idx_telegram_user_files_pending_queue
+      ON telegram_user_files (authorized_user_id, status, file_kind, queue_position, received_at);
+    `);
+  }
+
+  function create(record) {
+    const normalizedRecord = normalizeCreateRecord(record);
+    const insertedRows = sqliteClient.query(`
+      INSERT INTO telegram_user_files (
+        authorized_user_id,
+        chat_id,
+        message_id,
+        media_group_id,
+        file_id,
+        file_unique_id,
+        file_name,
+        mime_type,
+        file_size,
+        file_kind,
+        deduplication_key,
+        local_path,
+        queue_position,
+        status,
+        error_code,
+        error_message,
+        received_at,
+        downloaded_at,
+        shown_at,
+        download_confirmed_at,
+        created_at,
+        updated_at
+      ) VALUES (
+        ${toSqlValue(normalizedRecord.authorized_user_id)},
+        ${toSqlValue(normalizedRecord.chat_id)},
+        ${toSqlValue(normalizedRecord.message_id)},
+        ${toSqlValue(normalizedRecord.media_group_id)},
+        ${toSqlValue(normalizedRecord.file_id)},
+        ${toSqlValue(normalizedRecord.file_unique_id)},
+        ${toSqlValue(normalizedRecord.file_name)},
+        ${toSqlValue(normalizedRecord.mime_type)},
+        ${toSqlValue(normalizedRecord.file_size)},
+        ${toSqlValue(normalizedRecord.file_kind)},
+        ${toSqlValue(normalizedRecord.deduplication_key)},
+        ${toSqlValue(normalizedRecord.local_path)},
+        ${toSqlValue(normalizedRecord.queue_position)},
+        ${toSqlValue(normalizedRecord.status)},
+        ${toSqlValue(normalizedRecord.error_code)},
+        ${toSqlValue(normalizedRecord.error_message)},
+        ${toSqlValue(normalizedRecord.received_at)},
+        ${toSqlValue(normalizedRecord.downloaded_at)},
+        ${toSqlValue(normalizedRecord.shown_at)},
+        ${toSqlValue(normalizedRecord.download_confirmed_at)},
+        ${toSqlValue(normalizedRecord.created_at)},
+        ${toSqlValue(normalizedRecord.updated_at)}
+      )
+      RETURNING *;
+    `);
+
+    return insertedRows[0] || null;
+  }
+
+  function findByFileUniqueId(fileUniqueId) {
+    const rows = sqliteClient.query(`
+      SELECT *
+      FROM telegram_user_files
+      WHERE file_unique_id = ${toSqlValue(fileUniqueId)}
+      ORDER BY created_at ASC, id ASC
+      LIMIT 1;
+    `);
+
+    return rows[0] || null;
+  }
+
+  function getPendingManualDownloadQueue(options) {
+    const normalizedOptions = options || {};
+    const limit = normalizePositiveInteger(normalizedOptions.limit, 10);
+
+    const photoAndVideoRows = sqliteClient.query(`
+      SELECT *
+      FROM telegram_user_files
+      WHERE status = 'pending_manual_download'
+        AND file_kind IN ('photo', 'video')
+      ORDER BY queue_position ASC, received_at ASC, id ASC
+      LIMIT ${limit};
+    `);
+
+    if (photoAndVideoRows.length > 0) {
+      return photoAndVideoRows;
+    }
+
+    return sqliteClient.query(`
+      SELECT *
+      FROM telegram_user_files
+      WHERE status = 'pending_manual_download'
+        AND file_kind = 'document'
+      ORDER BY queue_position ASC, received_at ASC, id ASC
+      LIMIT ${limit};
+    `);
+  }
+
+  function getManualDownloadQueue(options) {
+    const normalizedOptions = options || {};
+    const limit = normalizePositiveInteger(normalizedOptions.limit, 100);
+
+    return sqliteClient.query(`
+      SELECT *
+      FROM telegram_user_files
+      WHERE status IN ('pending_manual_download', 'pending_size_unknown', 'shown_to_user')
+      ORDER BY queue_position ASC, received_at ASC, id ASC
+      LIMIT ${limit};
+    `);
+  }
+
+  function getShownToUserFiles() {
+    return sqliteClient.query(`
+      SELECT *
+      FROM telegram_user_files
+      WHERE status = 'shown_to_user'
+      ORDER BY shown_at ASC, queue_position ASC, id ASC;
+    `);
+  }
+
+  function getNextQueuePosition() {
+    const rows = sqliteClient.query(`
+      SELECT COALESCE(MAX(queue_position), 0) + 1 AS next_queue_position
+      FROM telegram_user_files
+      WHERE queue_position IS NOT NULL;
+    `);
+
+    return rows.length > 0 ? rows[0].next_queue_position : 1;
+  }
+
+  function markFilesAsShownToUser(recordIds, shownAt) {
+    return updateStatuses({
+      recordIds,
+      currentStatus: 'pending_manual_download',
+      nextStatus: 'shown_to_user',
+      timestampColumn: 'shown_at',
+      timestampValue: shownAt || new Date().toISOString()
+    });
+  }
+
+  function markFilesAsDownloadConfirmed(recordIds, confirmedAt) {
+    return updateStatuses({
+      recordIds,
+      currentStatus: 'shown_to_user',
+      nextStatus: 'download_confirmed',
+      timestampColumn: 'download_confirmed_at',
+      timestampValue: confirmedAt || new Date().toISOString()
+    });
+  }
+
+  function markFilesAsSendFailed(recordIds, error, failedAt) {
+    const ids = Array.isArray(recordIds) ? recordIds.filter(isPositiveInteger) : [];
+
+    if (ids.length === 0) {
+      return [];
+    }
+
+    const timestamp = failedAt || new Date().toISOString();
+    const idsSql = ids.map(toSqlValue).join(', ');
+    const errorMessage = error && error.message ? error.message : String(error || 'send_failed');
+
+    return sqliteClient.query(`
+      UPDATE telegram_user_files
+      SET status = 'send_failed',
+          error_code = 'send_failed',
+          error_message = ${toSqlValue(errorMessage)},
+          updated_at = ${toSqlValue(timestamp)}
+      WHERE id IN (${idsSql})
+        AND status = 'pending_manual_download'
+      RETURNING *;
+    `);
+  }
+
+  function markActiveQueueAsDeletedByUser(deletedAt) {
+    const timestamp = deletedAt || new Date().toISOString();
+
+    return sqliteClient.query(`
+      UPDATE telegram_user_files
+      SET status = 'deleted_by_user',
+          updated_at = ${toSqlValue(timestamp)}
+      WHERE status IN ('pending_manual_download', 'pending_size_unknown', 'shown_to_user')
+      RETURNING *;
+    `);
+  }
+
+  function updateStatuses(options) {
+    const recordIds = Array.isArray(options.recordIds) ? options.recordIds.filter(isPositiveInteger) : [];
+
+    if (recordIds.length === 0) {
+      return [];
+    }
+
+    const idsSql = recordIds.map(toSqlValue).join(', ');
+
+    return sqliteClient.query(`
+      UPDATE telegram_user_files
+      SET status = ${toSqlValue(options.nextStatus)},
+          ${options.timestampColumn} = ${toSqlValue(options.timestampValue)},
+          updated_at = ${toSqlValue(options.timestampValue)}
+      WHERE id IN (${idsSql})
+        AND status = ${toSqlValue(options.currentStatus)}
+      RETURNING *;
+    `);
+  }
+}
+
+function normalizeCreateRecord(record) {
+  if (!record || typeof record !== 'object') {
+    throw new Error('record is required');
+  }
+
+  const now = record.created_at || new Date().toISOString();
+
+  return {
+    authorized_user_id: requiredNumber(record.authorized_user_id, 'authorized_user_id'),
+    chat_id: requiredNumber(record.chat_id, 'chat_id'),
+    message_id: requiredNumber(record.message_id, 'message_id'),
+    media_group_id: optionalValue(record.media_group_id),
+    file_id: requiredString(record.file_id, 'file_id'),
+    file_unique_id: requiredString(record.file_unique_id, 'file_unique_id'),
+    file_name: optionalValue(record.file_name),
+    mime_type: optionalValue(record.mime_type),
+    file_size: optionalNumber(record.file_size),
+    file_kind: requiredString(record.file_kind, 'file_kind'),
+    deduplication_key: requiredString(record.deduplication_key, 'deduplication_key'),
+    local_path: optionalValue(record.local_path),
+    queue_position: optionalNumber(record.queue_position),
+    status: requiredString(record.status, 'status'),
+    error_code: optionalValue(record.error_code),
+    error_message: optionalValue(record.error_message),
+    received_at: requiredString(record.received_at, 'received_at'),
+    downloaded_at: optionalValue(record.downloaded_at),
+    shown_at: optionalValue(record.shown_at),
+    download_confirmed_at: optionalValue(record.download_confirmed_at),
+    created_at: now,
+    updated_at: record.updated_at || now
+  };
+}
+
+function requiredString(value, fieldName) {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`${fieldName} is required`);
+  }
+
+  return value;
+}
+
+function requiredNumber(value, fieldName) {
+  if (!Number.isFinite(value)) {
+    throw new Error(`${fieldName} must be a number`);
+  }
+
+  return value;
+}
+
+function optionalNumber(value) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  if (!Number.isFinite(value)) {
+    throw new Error('Optional numeric field must be a finite number');
+  }
+
+  return value;
+}
+
+function optionalValue(value) {
+  return value === undefined ? null : value;
+}
+
+function normalizePositiveInteger(value, fallback) {
+  if (Number.isInteger(value) && value > 0) {
+    return value;
+  }
+
+  return fallback;
+}
+
+function isPositiveInteger(value) {
+  return Number.isInteger(value) && value > 0;
+}
+
+module.exports = {
+  createTelegramUserFilesRepository,
+  normalizeCreateRecord
+};
