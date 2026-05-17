@@ -1,0 +1,23 @@
+'use strict';
+
+const path = require('path');
+
+const { createRestartingProcessSupervisor } = require('./application/process-supervisor');
+const { normalizeOptionalNumber } = require('./config');
+
+const restartDelayMs = normalizeOptionalNumber(process.env.BOT_RESTART_DELAY_MS) || 5000;
+const supervisor = createRestartingProcessSupervisor({
+  command: process.execPath,
+  args: [path.join(__dirname, 'index.js')],
+  restartDelayMs
+});
+
+supervisor.start();
+
+process.once('SIGINT', stop);
+process.once('SIGTERM', stop);
+
+function stop(signal) {
+  console.log(`Received ${signal}; stopping bot supervisor.`);
+  supervisor.stop(signal);
+}

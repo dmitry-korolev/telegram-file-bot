@@ -17,8 +17,9 @@ function runTests() {
   testQueueMessageUsesSummaryOnly();
   testQueueSummaryMessageUsesAggregate();
   testStatsMessage();
-  testShowNextKeyboardTextChangesByContext();
-  testShownFilesMessageUsesConfirmationText();
+  testShowNextKeyboardIncludesQueueAndSizeActions();
+  testShowNextKeyboardCanHideSizeActions();
+  testShownFilesMessageMarksFilesDownloaded();
   testSingleDownloadedFileMessage();
   testMultipleFilesSummary();
 }
@@ -52,29 +53,38 @@ function testCommandMessageDetection() {
   assert.strictEqual(isCommandMessage({ caption: '/queue' }), false);
 }
 
-function testShowNextKeyboardTextChangesByContext() {
+function testShowNextKeyboardIncludesQueueAndSizeActions() {
+  const keyboard = createShowNextFilesKeyboard().inline_keyboard;
+
   assert.strictEqual(
-    createShowNextFilesKeyboard().inline_keyboard[0][0].text,
+    keyboard[0][0].text,
     'Показать следующие вложения'
   );
   assert.strictEqual(
-    createShowNextFilesKeyboard({ confirmAndShowNext: true }).inline_keyboard[0][0].text,
-    'Подтвердить скачивание и показать следующие'
+    keyboard[1][0].callback_data,
+    'show_largest_files'
   );
   assert.strictEqual(
-    createShowNextFilesKeyboard({ confirmOnly: true }).inline_keyboard[0][0].text,
-    'Подтвердить скачивание'
+    keyboard[1][1].callback_data,
+    'show_smallest_files'
   );
 }
 
-function testShownFilesMessageUsesConfirmationText() {
+function testShowNextKeyboardCanHideSizeActions() {
+  assert.strictEqual(
+    createShowNextFilesKeyboard({ includeSizeButtons: false }).inline_keyboard.length,
+    1
+  );
+}
+
+function testShownFilesMessageMarksFilesDownloaded() {
   assert.strictEqual(
     buildShownFilesMessage(10, 2),
-    'Показано вложений: 10. Скачайте их в Telegram. После этого нажмите "Подтвердить скачивание и показать следующие", чтобы подтвердить скачивание и получить следующую пачку. Осталось в очереди: 2.'
+    'Показано вложений: 10. Они отмечены как скачанные. Осталось в очереди: 2.'
   );
   assert.strictEqual(
     buildShownFilesMessage(2, 0),
-    'Показано вложений: 2. Скачайте их в Telegram. После этого нажмите "Подтвердить скачивание", чтобы завершить очередь. Осталось в очереди: 0.'
+    'Показано вложений: 2. Они отмечены как скачанные. Осталось в очереди: 0.'
   );
 }
 

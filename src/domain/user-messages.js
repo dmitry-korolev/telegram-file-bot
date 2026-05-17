@@ -14,21 +14,31 @@ function getCommandName(message) {
 
 function createShowNextFilesKeyboard(options) {
   const normalizedOptions = options || {};
-  const text = normalizedOptions.confirmOnly
-    ? 'Подтвердить скачивание'
-    : normalizedOptions.confirmAndShowNext
-      ? 'Подтвердить скачивание и показать следующие'
-      : 'Показать следующие вложения';
+  const includeSizeButtons = normalizedOptions.includeSizeButtons !== false;
+  const keyboard = [
+    [
+      {
+        text: 'Показать следующие вложения',
+        callback_data: 'show_next_files'
+      }
+    ]
+  ];
+
+  if (includeSizeButtons) {
+    keyboard.push([
+      {
+        text: '10 самых больших',
+        callback_data: 'show_largest_files'
+      },
+      {
+        text: '10 самых маленьких',
+        callback_data: 'show_smallest_files'
+      }
+    ]);
+  }
 
   return {
-    inline_keyboard: [
-      [
-        {
-          text,
-          callback_data: 'show_next_files'
-        }
-      ]
-    ]
+    inline_keyboard: keyboard
   };
 }
 
@@ -106,10 +116,10 @@ function buildShownFilesMessage(shownCount, remainingCount) {
   }
 
   if (remainingCount > 0) {
-    return `Показано вложений: ${shownCount}. Скачайте их в Telegram. После этого нажмите "Подтвердить скачивание и показать следующие", чтобы подтвердить скачивание и получить следующую пачку. Осталось в очереди: ${remainingCount}.`;
+    return `Показано вложений: ${shownCount}. Они отмечены как скачанные. Осталось в очереди: ${remainingCount}.`;
   }
 
-  return `Показано вложений: ${shownCount}. Скачайте их в Telegram. После этого нажмите "Подтвердить скачивание", чтобы завершить очередь. Осталось в очереди: 0.`;
+  return `Показано вложений: ${shownCount}. Они отмечены как скачанные. Осталось в очереди: 0.`;
 }
 
 function buildClearQueuePrompt() {

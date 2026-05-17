@@ -4,7 +4,7 @@
   "description": "Stage 1 scaffold for a Telegram file processing bot without real Telegram API integration.",
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js",
+    "start": "node src/start.js",
     "dev": "node --watch src/index.js",
     "test": "node tests/run-tests.js",
     "docker:build": "docker build -t telegram-file-bot:stage1 ."

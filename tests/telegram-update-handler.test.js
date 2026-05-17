@@ -5,7 +5,9 @@ const assert = require('assert');
 const {
   CALLBACK_CANCEL_CLEAR_QUEUE,
   CALLBACK_CONFIRM_CLEAR_QUEUE,
+  CALLBACK_SHOW_LARGEST_FILES,
   CALLBACK_SHOW_NEXT_FILES,
+  CALLBACK_SHOW_SMALLEST_FILES,
   createTelegramUpdateHandler
 } = require('../src/application/telegram-update-handler');
 const { DEFAULT_SMALL_FILE_LIMIT_BYTES } = require('../src/domain/file-size');
@@ -32,6 +34,8 @@ async function runTests() {
   await testConfirmClearQueueMarksRecordsDeleted();
   await testUnauthorizedCallbackIsIgnored();
   await testShowNextFilesSendsAtMostTenAndMarksShown();
+  await testShowLargestFilesUsesSizeDescendingOrder();
+  await testShowSmallestFilesUsesSizeAscendingOrder();
   await testShowNextFilesConfirmsPreviouslyShownFirst();
   await testShowNextFilesUsesQueueSummaryForRemainingCount();
   await testShowNextFilesReportsEmptyQueue();
@@ -445,6 +449,8 @@ async function testQueueCommandShowsQueue() {
   assert.strictEqual(deps.messageSender.calls.length, 1);
   assert.strictEqual(deps.messageSender.calls[0].text, 'В очереди файлов: 1. Суммарный объем: 25.0 МБ.');
   assert.deepStrictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].callback_data, CALLBACK_SHOW_NEXT_FILES);
+  assert.deepStrictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[1][0].callback_data, CALLBACK_SHOW_LARGEST_FILES);
+  assert.deepStrictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[1][1].callback_data, CALLBACK_SHOW_SMALLEST_FILES);
 }
 
 async function testClearQueueCommandRequestsConfirmation() {
@@ -520,11 +526,58 @@ async function testShowNextFilesSendsAtMostTenAndMarksShown() {
 
   assert.strictEqual(result.reason, 'manual_download_batch_shown');
   assert.strictEqual(deps.fileSender.calls.length, 10);
-  assert.strictEqual(deps.fileRepository.shownIds.length, 10);
+  assert.strictEqual(deps.fileRepository.confirmedIds.length, 10);
+  assert.deepStrictEqual(deps.fileRepository.shownIds, []);
   assert.strictEqual(deps.fileSender.calls[0].method, 'sendPhoto');
   assert.strictEqual(deps.fileSender.calls.some((call) => call.method === 'sendDocument'), false);
   assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].callback_data, CALLBACK_SHOW_NEXT_FILES);
-  assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].text, 'Подтвердить скачивание и показать следующие');
+  assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].text, 'Показать следующие вложения');
+}
+
+async function testShowLargestFilesUsesSizeDescendingOrder() {
+  const deps = createMockDependencies({
+    pendingQueue: [
+      createRepositoryRecord({ id: 1, file_id: 'small-file', file_unique_id: 'small-unique', file_size: 5 * 1024 * 1024, file_kind: 'document' }),
+      createRepositoryRecord({ id: 2, file_id: 'large-file', file_unique_id: 'large-unique', file_size: 50 * 1024 * 1024, file_kind: 'document' }),
+      createRepositoryRecord({ id: 3, file_id: 'medium-file', file_unique_id: 'medium-unique', file_size: 20 * 1024 * 1024, file_kind: 'document' })
+    ]
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 28,
+    callback_query: createCallbackQuery(CALLBACK_SHOW_LARGEST_FILES)
+  });
+
+  assert.strictEqual(result.reason, 'manual_download_batch_shown');
+  assert.deepStrictEqual(
+    deps.fileSender.calls.map((call) => call.fileId),
+    ['large-file', 'medium-file', 'small-file']
+  );
+  assert.deepStrictEqual(deps.fileRepository.lastPendingQueueOptions.orderBy, 'size_desc');
+}
+
+async function testShowSmallestFilesUsesSizeAscendingOrder() {
+  const deps = createMockDependencies({
+    pendingQueue: [
+      createRepositoryRecord({ id: 1, file_id: 'large-file', file_unique_id: 'large-unique', file_size: 50 * 1024 * 1024, file_kind: 'document' }),
+      createRepositoryRecord({ id: 2, file_id: 'unknown-file', file_unique_id: 'unknown-unique', file_size: null, file_kind: 'document' }),
+      createRepositoryRecord({ id: 3, file_id: 'small-file', file_unique_id: 'small-unique', file_size: 5 * 1024 * 1024, file_kind: 'document' })
+    ]
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 29,
+    callback_query: createCallbackQuery(CALLBACK_SHOW_SMALLEST_FILES)
+  });
+
+  assert.strictEqual(result.reason, 'manual_download_batch_shown');
+  assert.deepStrictEqual(
+    deps.fileSender.calls.map((call) => call.fileId),
+    ['small-file', 'large-file']
+  );
+  assert.deepStrictEqual(deps.fileRepository.lastPendingQueueOptions.orderBy, 'size_asc');
 }
 
 async function testShowNextFilesConfirmsPreviouslyShownFirst() {
@@ -544,9 +597,9 @@ async function testShowNextFilesConfirmsPreviouslyShownFirst() {
   });
 
   assert.strictEqual(result.confirmedCount, 1);
-  assert.deepStrictEqual(deps.fileRepository.confirmedIds, [20]);
-  assert.deepStrictEqual(deps.fileRepository.shownIds, [21]);
-  assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].text, 'Подтвердить скачивание');
+  assert.deepStrictEqual(deps.fileRepository.confirmedIds, [20, 21]);
+  assert.deepStrictEqual(deps.fileRepository.shownIds, []);
+  assert.strictEqual(deps.messageSender.calls[0].replyMarkup, undefined);
 }
 
 async function testShowNextFilesUsesQueueSummaryForRemainingCount() {
@@ -579,7 +632,7 @@ async function testShowNextFilesUsesQueueSummaryForRemainingCount() {
 
   assert.strictEqual(result.reason, 'manual_download_batch_shown');
   assert.strictEqual(deps.messageSender.calls[0].text.includes('Осталось в очереди: 693.'), true);
-  assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].text, 'Подтвердить скачивание и показать следующие');
+  assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].text, 'Показать следующие вложения');
 }
 
 async function testShowNextFilesReportsEmptyQueue() {
@@ -611,7 +664,7 @@ async function testSendFailureMarksOnlyFailedFile() {
     callback_query: createCallbackQuery(CALLBACK_SHOW_NEXT_FILES)
   });
 
-  assert.deepStrictEqual(deps.fileRepository.shownIds, [30]);
+  assert.deepStrictEqual(deps.fileRepository.confirmedIds, [30]);
   assert.deepStrictEqual(deps.fileRepository.sendFailedIds, [31]);
   assert.strictEqual(result.failedFiles.length, 1);
   assert.strictEqual(result.files.length, 1);
@@ -631,6 +684,7 @@ function createMockDependencies(options) {
     queueSummary: normalizedOptions.queueSummary || null,
     pendingSummary: normalizedOptions.pendingSummary || null,
     shownQueue: normalizedOptions.shownQueue || [],
+    lastPendingQueueOptions: null,
     shownIds: [],
     confirmedIds: [],
     sendFailedIds: [],
@@ -696,6 +750,21 @@ function createMockDependencies(options) {
     },
     async getPendingManualDownloadQueue(options) {
       const limit = options && options.limit ? options.limit : 10;
+      const orderBy = options && options.orderBy ? options.orderBy : 'queue';
+      this.lastPendingQueueOptions = options || {};
+
+      if (orderBy === 'size_desc' || orderBy === 'size_asc') {
+        return this.pendingQueue
+          .filter((record) => record.status === 'pending_manual_download' && Number.isFinite(record.file_size))
+          .slice()
+          .sort((left, right) => (
+            orderBy === 'size_desc'
+              ? right.file_size - left.file_size
+              : left.file_size - right.file_size
+          ))
+          .slice(0, limit);
+      }
+
       const media = this.pendingQueue.filter((record) => record.status === 'pending_manual_download' && ['photo', 'video'].includes(record.file_kind));
 
       if (media.length > 0) {
@@ -735,7 +804,14 @@ function createMockDependencies(options) {
     },
     async markFilesAsDownloadConfirmed(recordIds) {
       this.confirmedIds.push(...recordIds);
-      return recordIds.map((id) => ({ id, status: 'download_confirmed' }));
+      this.pendingQueue = this.pendingQueue.map((record) => (
+        recordIds.includes(record.id) ? Object.assign({}, record, { status: 'download_confirmed' }) : record
+      ));
+      this.manualQueue = this.manualQueue.map((record) => (
+        recordIds.includes(record.id) ? Object.assign({}, record, { status: 'download_confirmed' }) : record
+      ));
+      this.shownQueue = this.shownQueue.filter((record) => !recordIds.includes(record.id));
+      return recordIds.map((id) => Object.assign({}, this.pendingQueue.find((record) => record.id === id), { id, status: 'download_confirmed' }));
     },
     async markFilesAsSendFailed(recordIds) {
       this.sendFailedIds.push(...recordIds);

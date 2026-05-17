@@ -168,6 +168,20 @@ function createTelegramUserFilesRepository(sqliteClient) {
   function getPendingManualDownloadQueue(options) {
     const normalizedOptions = options || {};
     const limit = normalizePositiveInteger(normalizedOptions.limit, 10);
+    const orderBy = normalizedOptions.orderBy || 'queue';
+
+    if (orderBy === 'size_desc' || orderBy === 'size_asc') {
+      const direction = orderBy === 'size_desc' ? 'DESC' : 'ASC';
+
+      return sqliteClient.query(`
+        SELECT *
+        FROM telegram_user_files
+        WHERE status = 'pending_manual_download'
+          AND file_size IS NOT NULL
+        ORDER BY file_size ${direction}, queue_position ASC, received_at ASC, id ASC
+        LIMIT ${limit};
+      `);
+    }
 
     const photoAndVideoRows = sqliteClient.query(`
       SELECT *
@@ -332,7 +346,7 @@ function createTelegramUserFilesRepository(sqliteClient) {
   function markFilesAsDownloadConfirmed(recordIds, confirmedAt) {
     return updateStatuses({
       recordIds,
-      currentStatus: 'shown_to_user',
+      currentStatus: ['pending_manual_download', 'shown_to_user'],
       nextStatus: 'download_confirmed',
       timestampColumn: 'download_confirmed_at',
       timestampValue: confirmedAt || new Date().toISOString()
@@ -404,13 +418,16 @@ function createTelegramUserFilesRepository(sqliteClient) {
 
     const idsSql = recordIds.map(toSqlValue).join(', ');
 
+    const currentStatuses = Array.isArray(options.currentStatus) ? options.currentStatus : [options.currentStatus];
+    const currentStatusesSql = currentStatuses.map(toSqlValue).join(', ');
+
     return sqliteClient.query(`
       UPDATE telegram_user_files
       SET status = ${toSqlValue(options.nextStatus)},
           ${options.timestampColumn} = ${toSqlValue(options.timestampValue)},
           updated_at = ${toSqlValue(options.timestampValue)}
       WHERE id IN (${idsSql})
-        AND status = ${toSqlValue(options.currentStatus)}
+        AND status IN (${currentStatusesSql})
       RETURNING *;
     `);
   }

@@ -12,6 +12,8 @@ function runTests() {
   testCreateRecordPersistsMetadata();
   testFindByFileUniqueIdReturnsExistingRecord();
   testPendingManualDownloadQueuePrioritizesPhotoAndVideo();
+  testPendingManualDownloadQueueCanSortByLargestKnownSize();
+  testPendingManualDownloadQueueCanSortBySmallestKnownSize();
   testPendingManualDownloadQueueIsGlobalAcrossUsers();
   testPendingManualDownloadQueueFallsBackToDocuments();
   testManualDownloadQueueIncludesActiveStatuses();
@@ -101,6 +103,85 @@ function testPendingManualDownloadQueuePrioritizesPhotoAndVideo() {
     assert.deepStrictEqual(
       queue.map((item) => item.queue_position),
       [2, 3]
+    );
+  });
+}
+
+function testPendingManualDownloadQueueCanSortByLargestKnownSize() {
+  withRepository((repository) => {
+    repository.create(createRecord({
+      file_id: 'small-1',
+      file_unique_id: 'small-unique-1',
+      file_kind: 'document',
+      file_size: 5 * 1024 * 1024,
+      queue_position: 1
+    }));
+    repository.create(createRecord({
+      file_id: 'large-1',
+      file_unique_id: 'large-unique-1',
+      file_kind: 'photo',
+      file_size: 50 * 1024 * 1024,
+      queue_position: 2
+    }));
+    repository.create(createRecord({
+      file_id: 'unknown-1',
+      file_unique_id: 'unknown-unique-1',
+      file_kind: 'video',
+      file_size: null,
+      queue_position: 3
+    }));
+    repository.create(createRecord({
+      file_id: 'medium-1',
+      file_unique_id: 'medium-unique-1',
+      file_kind: 'video',
+      file_size: 20 * 1024 * 1024,
+      queue_position: 4
+    }));
+
+    const queue = repository.getPendingManualDownloadQueue({
+      limit: 10,
+      orderBy: 'size_desc'
+    });
+
+    assert.deepStrictEqual(
+      queue.map((item) => item.file_unique_id),
+      ['large-unique-1', 'medium-unique-1', 'small-unique-1']
+    );
+  });
+}
+
+function testPendingManualDownloadQueueCanSortBySmallestKnownSize() {
+  withRepository((repository) => {
+    repository.create(createRecord({
+      file_id: 'large-1',
+      file_unique_id: 'large-unique-1',
+      file_kind: 'photo',
+      file_size: 50 * 1024 * 1024,
+      queue_position: 1
+    }));
+    repository.create(createRecord({
+      file_id: 'unknown-1',
+      file_unique_id: 'unknown-unique-1',
+      file_kind: 'document',
+      file_size: null,
+      queue_position: 2
+    }));
+    repository.create(createRecord({
+      file_id: 'small-1',
+      file_unique_id: 'small-unique-1',
+      file_kind: 'video',
+      file_size: 5 * 1024 * 1024,
+      queue_position: 3
+    }));
+
+    const queue = repository.getPendingManualDownloadQueue({
+      limit: 10,
+      orderBy: 'size_asc'
+    });
+
+    assert.deepStrictEqual(
+      queue.map((item) => item.file_unique_id),
+      ['small-unique-1', 'large-unique-1']
     );
   });
 }
@@ -421,16 +502,30 @@ function testMarkFilesAsDownloadConfirmedUpdatesShownRecords() {
       status: 'shown_to_user',
       shown_at: '2026-05-16T10:10:00.000Z'
     }));
+    const second = repository.create(createRecord({
+      file_id: 'video-1',
+      file_unique_id: 'video-unique-1',
+      file_kind: 'video',
+      queue_position: 2,
+      status: 'pending_manual_download'
+    }));
 
     const confirmedAt = '2026-05-16T10:20:00.000Z';
-    const updated = repository.markFilesAsDownloadConfirmed([first.id], confirmedAt);
-    const found = repository.findByFileUniqueId('photo-unique-1');
+    const updated = repository.markFilesAsDownloadConfirmed([first.id, second.id], confirmedAt);
+    const foundFirst = repository.findByFileUniqueId('photo-unique-1');
+    const foundSecond = repository.findByFileUniqueId('video-unique-1');
 
-    assert.strictEqual(updated.length, 1);
-    assert.strictEqual(updated[0].status, 'download_confirmed');
-    assert.strictEqual(updated[0].download_confirmed_at, confirmedAt);
-    assert.strictEqual(found.status, 'download_confirmed');
-    assert.strictEqual(found.download_confirmed_at, confirmedAt);
+    assert.strictEqual(updated.length, 2);
+    assert.deepStrictEqual(
+      updated.map((item) => item.status),
+      ['download_confirmed', 'download_confirmed']
+    );
+    assert.deepStrictEqual(
+      updated.map((item) => item.download_confirmed_at),
+      [confirmedAt, confirmedAt]
+    );
+    assert.strictEqual(foundFirst.status, 'download_confirmed');
+    assert.strictEqual(foundSecond.status, 'download_confirmed');
   });
 }
 

@@ -3,6 +3,7 @@
 const tests = [
   require('./env.test'),
   require('./polling.test'),
+  require('./process-supervisor.test'),
   require('./process-message.test'),
   require('./sqlite-repository.test'),
   require('./telegram-file-downloader.test'),

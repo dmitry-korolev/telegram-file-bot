@@ -17,6 +17,8 @@ const {
 } = require('../domain/user-messages');
 
 const CALLBACK_SHOW_NEXT_FILES = 'show_next_files';
+const CALLBACK_SHOW_LARGEST_FILES = 'show_largest_files';
+const CALLBACK_SHOW_SMALLEST_FILES = 'show_smallest_files';
 const CALLBACK_CONFIRM_CLEAR_QUEUE = 'confirm_clear_queue';
 const CALLBACK_CANCEL_CLEAR_QUEUE = 'cancel_clear_queue';
 const MANUAL_DOWNLOAD_BATCH_SIZE = 10;
@@ -287,7 +289,15 @@ function createTelegramUpdateHandler(dependencies) {
     });
 
     if (callbackQuery.data === CALLBACK_SHOW_NEXT_FILES) {
-      return showNextManualDownloadBatch(callbackQuery);
+      return showManualDownloadBatch(callbackQuery, 'queue');
+    }
+
+    if (callbackQuery.data === CALLBACK_SHOW_LARGEST_FILES) {
+      return showManualDownloadBatch(callbackQuery, 'size_desc');
+    }
+
+    if (callbackQuery.data === CALLBACK_SHOW_SMALLEST_FILES) {
+      return showManualDownloadBatch(callbackQuery, 'size_asc');
     }
 
     if (callbackQuery.data === CALLBACK_CONFIRM_CLEAR_QUEUE) {
@@ -337,7 +347,7 @@ function createTelegramUpdateHandler(dependencies) {
     };
   }
 
-  async function showNextManualDownloadBatch(callbackQuery) {
+  async function showManualDownloadBatch(callbackQuery, orderBy) {
     const chatId = callbackQuery.message && callbackQuery.message.chat && callbackQuery.message.chat.id;
     const timestamp = now();
     const shownFiles = await deps.fileRepository.getShownToUserFiles();
@@ -348,7 +358,8 @@ function createTelegramUpdateHandler(dependencies) {
     }
 
     const queue = await deps.fileRepository.getPendingManualDownloadQueue({
-      limit: MANUAL_DOWNLOAD_BATCH_SIZE
+      limit: MANUAL_DOWNLOAD_BATCH_SIZE,
+      orderBy
     });
 
     if (queue.length === 0) {
@@ -385,8 +396,8 @@ function createTelegramUpdateHandler(dependencies) {
     }
 
     if (sentFiles.length > 0) {
-      const shown = await deps.fileRepository.markFilesAsShownToUser(sentFiles.map((file) => file.id), now());
-      await logFileEvents(shown, 'shown_to_user', 'shown_to_user');
+      const confirmed = await deps.fileRepository.markFilesAsDownloadConfirmed(sentFiles.map((file) => file.id), now());
+      await logFileEvents(confirmed, 'download_confirmed', 'download_confirmed');
     }
 
     const remainingCount = await getRemainingManualDownloadCount();
@@ -395,10 +406,7 @@ function createTelegramUpdateHandler(dependencies) {
     await deps.messageSender.sendMessage({
       chatId,
       text,
-      replyMarkup: createShowNextFilesKeyboard({
-        confirmOnly: remainingCount === 0,
-        confirmAndShowNext: remainingCount > 0
-      })
+      replyMarkup: remainingCount > 0 ? createShowNextFilesKeyboard() : undefined
     });
 
     return {
@@ -763,6 +771,8 @@ module.exports = {
   createInMemoryQueuePosition,
   DEFAULT_MEDIA_GROUP_RESPONSE_DELAY_MS,
   CALLBACK_SHOW_NEXT_FILES,
+  CALLBACK_SHOW_LARGEST_FILES,
+  CALLBACK_SHOW_SMALLEST_FILES,
   CALLBACK_CONFIRM_CLEAR_QUEUE,
   CALLBACK_CANCEL_CLEAR_QUEUE
 };
