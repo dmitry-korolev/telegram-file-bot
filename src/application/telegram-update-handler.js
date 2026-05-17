@@ -389,10 +389,7 @@ function createTelegramUpdateHandler(dependencies) {
       await logFileEvents(shown, 'shown_to_user', 'shown_to_user');
     }
 
-    const remainingQueue = await deps.fileRepository.getManualDownloadQueue({
-      limit: 100
-    });
-    const remainingCount = countPendingFiles(remainingQueue);
+    const remainingCount = await getRemainingManualDownloadCount();
     const text = buildShownFilesMessage(sentFiles.length, remainingCount);
 
     await deps.messageSender.sendMessage({
@@ -430,6 +427,24 @@ function createTelegramUpdateHandler(dependencies) {
 
   function countPendingFiles(files) {
     return files.filter((file) => file.status === 'pending_manual_download' || file.status === 'pending_size_unknown').length;
+  }
+
+  async function getRemainingManualDownloadCount() {
+    if (typeof deps.fileRepository.getPendingManualDownloadSummary === 'function') {
+      const summary = await deps.fileRepository.getPendingManualDownloadSummary();
+      return summary && Number.isFinite(summary.fileCount) ? summary.fileCount : 0;
+    }
+
+    if (typeof deps.fileRepository.getManualDownloadQueueSummary === 'function') {
+      const summary = await deps.fileRepository.getManualDownloadQueueSummary();
+      return summary && Number.isFinite(summary.fileCount) ? summary.fileCount : 0;
+    }
+
+    const remainingQueue = await deps.fileRepository.getManualDownloadQueue({
+      limit: 100
+    });
+
+    return countPendingFiles(remainingQueue);
   }
 
   function toResultFile(file, overrideStatus) {
@@ -481,6 +496,7 @@ function createTelegramUpdateHandler(dependencies) {
       };
 
       await logFileEvent(result, 'duplicate_skipped');
+      await incrementDuplicateCounter();
       return result;
     }
 
@@ -630,6 +646,14 @@ function createTelegramUpdateHandler(dependencies) {
       error_message: error ? getErrorMessage(error) : file && file.errorMessage ? file.errorMessage : record && record.error_message,
       created_at: now()
     });
+  }
+
+  async function incrementDuplicateCounter() {
+    if (!deps.fileRepository || typeof deps.fileRepository.incrementMetaCounter !== 'function') {
+      return null;
+    }
+
+    return deps.fileRepository.incrementMetaCounter('duplicate_skipped_count', 1, now());
   }
 
   function scheduleMediaGroupResponse(message, files) {

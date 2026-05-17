@@ -33,6 +33,7 @@ async function runTests() {
   await testUnauthorizedCallbackIsIgnored();
   await testShowNextFilesSendsAtMostTenAndMarksShown();
   await testShowNextFilesConfirmsPreviouslyShownFirst();
+  await testShowNextFilesUsesQueueSummaryForRemainingCount();
   await testShowNextFilesReportsEmptyQueue();
   await testSendFailureMarksOnlyFailedFile();
 }
@@ -230,6 +231,7 @@ async function testDuplicateFilesAreSkipped() {
   assert.strictEqual(result.files[0].status, 'duplicate_skipped');
   assert.deepStrictEqual(deps.downloader.calls, []);
   assert.deepStrictEqual(deps.fileRepository.records, []);
+  assert.strictEqual(deps.fileRepository.metaCounters.duplicate_skipped_count, 1);
   assert.strictEqual(deps.messageDeleter.calls.length, 1);
   assert.strictEqual(deps.messageSender.calls.length, 1);
   assert.strictEqual(
@@ -547,6 +549,39 @@ async function testShowNextFilesConfirmsPreviouslyShownFirst() {
   assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].text, 'Подтвердить скачивание');
 }
 
+async function testShowNextFilesUsesQueueSummaryForRemainingCount() {
+  const pendingQueue = [];
+
+  for (let index = 1; index <= 10; index += 1) {
+    pendingQueue.push(createRepositoryRecord({
+      id: index,
+      file_kind: 'photo',
+      queue_position: index,
+      file_id: `file-${index}`,
+      file_unique_id: `unique-${index}`
+    }));
+  }
+
+  const deps = createMockDependencies({
+    pendingQueue,
+    pendingSummary: {
+      fileCount: 693,
+      totalKnownSize: 120000 * 1024 * 1024,
+      unknownSizeFiles: 0
+    }
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 27,
+    callback_query: createCallbackQuery(CALLBACK_SHOW_NEXT_FILES)
+  });
+
+  assert.strictEqual(result.reason, 'manual_download_batch_shown');
+  assert.strictEqual(deps.messageSender.calls[0].text.includes('Осталось в очереди: 693.'), true);
+  assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].text, 'Подтвердить скачивание и показать следующие');
+}
+
 async function testShowNextFilesReportsEmptyQueue() {
   const deps = createMockDependencies();
   const handler = createTelegramUpdateHandler(deps);
@@ -594,12 +629,14 @@ function createMockDependencies(options) {
     pendingQueue: normalizedOptions.pendingQueue || [],
     manualQueue: normalizedOptions.manualQueue || normalizedOptions.pendingQueue || [],
     queueSummary: normalizedOptions.queueSummary || null,
+    pendingSummary: normalizedOptions.pendingSummary || null,
     shownQueue: normalizedOptions.shownQueue || [],
     shownIds: [],
     confirmedIds: [],
     sendFailedIds: [],
     deletedRecords: [],
     deleteFailedIds: [],
+    metaCounters: {},
     events: [],
     async findByFileUniqueId(fileUniqueId) {
       if (existingFileUniqueIds.has(fileUniqueId)) {
@@ -618,6 +655,14 @@ function createMockDependencies(options) {
       this.events.push(created);
       return created;
     },
+    async incrementMetaCounter(key, incrementBy) {
+      const increment = Number.isInteger(incrementBy) ? incrementBy : 1;
+      this.metaCounters[key] = (this.metaCounters[key] || 0) + increment;
+      return {
+        key,
+        value: String(this.metaCounters[key])
+      };
+    },
     async getManualDownloadQueue() {
       return this.manualQueue.filter((record) => record.status !== 'deleted_by_user');
     },
@@ -633,6 +678,20 @@ function createMockDependencies(options) {
           Number.isFinite(record.file_size) ? sum + record.file_size : sum
         ), 0),
         unknownSizeFiles: active.filter((record) => !Number.isFinite(record.file_size)).length
+      };
+    },
+    async getPendingManualDownloadSummary() {
+      if (this.pendingSummary) {
+        return this.pendingSummary;
+      }
+
+      const pending = this.manualQueue.filter((record) => ['pending_manual_download', 'pending_size_unknown'].includes(record.status));
+      return {
+        fileCount: pending.length,
+        totalKnownSize: pending.reduce((sum, record) => (
+          Number.isFinite(record.file_size) ? sum + record.file_size : sum
+        ), 0),
+        unknownSizeFiles: pending.filter((record) => !Number.isFinite(record.file_size)).length
       };
     },
     async getPendingManualDownloadQueue(options) {

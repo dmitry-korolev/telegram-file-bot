@@ -431,6 +431,17 @@ created_at
 
 В `telegram_file_events` логируется результат обработки каждого файла или медиа-вложения, включая `downloaded`, `pending_manual_download`, `pending_size_unknown`, `duplicate_skipped`, `download_failed`, `send_failed`, `delete_message_failed`, `shown_to_user`, `download_confirmed` и `deleted_by_user`.
 
+Минимальная таблица/коллекция `telegram_bot_meta` для простых счетчиков:
+
+```sql
+key
+value
+created_at
+updated_at
+```
+
+Счетчик `duplicate_skipped_count` хранит количество отсеянных дубликатов, потому что для дубликатов не создается отдельная запись в `telegram_user_files`.
+
 ## 15. Ошибочные сценарии
 
 ### 15.1. Ошибка скачивания малого файла

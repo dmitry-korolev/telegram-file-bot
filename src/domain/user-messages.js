@@ -93,7 +93,7 @@ function buildStatsMessage(stats) {
     `Активная очередь: ${normalizedStats.activeQueueFiles || 0} файлов, ${formatFileSize(normalizedStats.activeQueueKnownSize || 0)}`,
     `Скачано автоматически: ${normalizedStats.downloadedFiles || 0}`,
     `Подтверждено ручных скачиваний: ${normalizedStats.downloadConfirmedFiles || 0}`,
-    `Дубликатов пропущено: ${normalizedStats.duplicateFiles || 0}`,
+    `Отсеяно дубликатов: ${normalizedStats.duplicateFiles || 0}`,
     `Ошибок: ${normalizedStats.failedFiles || 0}`,
     `Типы: documents - ${normalizedStats.documentFiles || 0}, photos - ${normalizedStats.photoFiles || 0}, videos - ${normalizedStats.videoFiles || 0}`,
     `Файлов с неизвестным размером: ${normalizedStats.unknownSizeFiles || 0}`

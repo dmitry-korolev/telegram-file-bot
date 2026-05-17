@@ -41,6 +41,7 @@ function testStatsMessage() {
 
   assert.strictEqual(response.includes('Всего файлов: 4'), true);
   assert.strictEqual(response.includes('Активная очередь: 1 файлов, 25.0 МБ'), true);
+  assert.strictEqual(response.includes('Отсеяно дубликатов: 0'), true);
   assert.strictEqual(response.includes('Ошибок: 1'), true);
 }
 

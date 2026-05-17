@@ -14,10 +14,12 @@ function createTelegramUserFilesRepository(sqliteClient) {
     getPendingManualDownloadQueue,
     getManualDownloadQueue,
     getManualDownloadQueueSummary,
+    getPendingManualDownloadSummary,
     getShownToUserFiles,
     getStats,
     getNextQueuePosition,
     createFileEvent,
+    incrementMetaCounter,
     markFilesAsShownToUser,
     markFilesAsDownloadConfirmed,
     markFilesAsSendFailed,
@@ -76,6 +78,22 @@ function createTelegramUserFilesRepository(sqliteClient) {
 
       CREATE INDEX IF NOT EXISTS idx_telegram_file_events_file_unique_id
       ON telegram_file_events (file_unique_id);
+
+      CREATE TABLE IF NOT EXISTS telegram_bot_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      INSERT OR IGNORE INTO telegram_bot_meta (key, value, created_at, updated_at)
+      SELECT
+        'duplicate_skipped_count',
+        CAST(COUNT(*) AS TEXT),
+        datetime('now'),
+        datetime('now')
+      FROM telegram_file_events
+      WHERE event_type = 'duplicate_skipped';
     `);
   }
 
@@ -200,6 +218,19 @@ function createTelegramUserFilesRepository(sqliteClient) {
     return normalizeQueueSummaryRow(rows[0] || {});
   }
 
+  function getPendingManualDownloadSummary() {
+    const rows = sqliteClient.query(`
+      SELECT
+        COUNT(*) AS file_count,
+        COALESCE(SUM(CASE WHEN file_size IS NOT NULL THEN file_size ELSE 0 END), 0) AS total_known_size,
+        SUM(CASE WHEN file_size IS NULL THEN 1 ELSE 0 END) AS unknown_size_files
+      FROM telegram_user_files
+      WHERE status IN ('pending_manual_download', 'pending_size_unknown');
+    `);
+
+    return normalizeQueueSummaryRow(rows[0] || {});
+  }
+
   function getShownToUserFiles() {
     return sqliteClient.query(`
       SELECT *
@@ -219,8 +250,12 @@ function createTelegramUserFilesRepository(sqliteClient) {
         COALESCE(SUM(CASE WHEN status IN ('pending_manual_download', 'pending_size_unknown', 'shown_to_user') AND file_size IS NOT NULL THEN file_size ELSE 0 END), 0) AS active_queue_known_size,
         SUM(CASE WHEN status = 'downloaded' THEN 1 ELSE 0 END) AS downloaded_files,
         SUM(CASE WHEN status = 'download_confirmed' THEN 1 ELSE 0 END) AS download_confirmed_files,
-        SUM(CASE WHEN status = 'duplicate_skipped' THEN 1 ELSE 0 END) AS duplicate_files,
-        SUM(CASE WHEN status IN ('download_failed', 'send_failed') THEN 1 ELSE 0 END) AS failed_files,
+        COALESCE((
+          SELECT CAST(value AS INTEGER)
+          FROM telegram_bot_meta
+          WHERE key = 'duplicate_skipped_count'
+        ), 0) AS duplicate_files,
+        SUM(CASE WHEN status IN ('download_failed', 'send_failed') OR error_code = 'delete_message_failed' THEN 1 ELSE 0 END) AS failed_files,
         SUM(CASE WHEN file_kind = 'document' THEN 1 ELSE 0 END) AS document_files,
         SUM(CASE WHEN file_kind = 'photo' THEN 1 ELSE 0 END) AS photo_files,
         SUM(CASE WHEN file_kind = 'video' THEN 1 ELSE 0 END) AS video_files
@@ -266,6 +301,22 @@ function createTelegramUserFilesRepository(sqliteClient) {
     `);
 
     return insertedRows[0] || null;
+  }
+
+  function incrementMetaCounter(key, incrementBy, updatedAt) {
+    const normalizedKey = requiredString(key, 'key');
+    const increment = Number.isInteger(incrementBy) ? incrementBy : 1;
+    const timestamp = updatedAt || new Date().toISOString();
+    const rows = sqliteClient.query(`
+      INSERT INTO telegram_bot_meta (key, value, created_at, updated_at)
+      VALUES (${toSqlValue(normalizedKey)}, ${toSqlValue(String(increment))}, ${toSqlValue(timestamp)}, ${toSqlValue(timestamp)})
+      ON CONFLICT(key) DO UPDATE SET
+        value = CAST(CAST(value AS INTEGER) + ${toSqlValue(increment)} AS TEXT),
+        updated_at = ${toSqlValue(timestamp)}
+      RETURNING *;
+    `);
+
+    return rows[0] || null;
   }
 
   function markFilesAsShownToUser(recordIds, shownAt) {

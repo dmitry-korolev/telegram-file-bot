@@ -16,8 +16,11 @@ function runTests() {
   testPendingManualDownloadQueueFallsBackToDocuments();
   testManualDownloadQueueIncludesActiveStatuses();
   testManualDownloadQueueSummaryIsNotLimited();
+  testPendingManualDownloadSummaryExcludesShownRecords();
   testGetShownToUserFilesReturnsShownRecords();
   testGetStatsAggregatesFiles();
+  testGetStatsUsesMetaDuplicateCounterAndDeleteFailures();
+  testIncrementMetaCounterCreatesAndUpdatesCounter();
   testGetNextQueuePositionUsesExistingMaximum();
   testMarkFilesAsShownToUserUpdatesPendingRecords();
   testMarkFilesAsDownloadConfirmedUpdatesShownRecords();
@@ -225,6 +228,30 @@ function testManualDownloadQueueSummaryIsNotLimited() {
   });
 }
 
+function testPendingManualDownloadSummaryExcludesShownRecords() {
+  withRepository((repository) => {
+    repository.create(createRecord({
+      file_id: 'pending-1',
+      file_unique_id: 'pending-unique-1',
+      status: 'pending_manual_download',
+      queue_position: 1,
+      file_size: 10 * 1024 * 1024
+    }));
+    repository.create(createRecord({
+      file_id: 'shown-1',
+      file_unique_id: 'shown-unique-1',
+      status: 'shown_to_user',
+      queue_position: 2,
+      file_size: 20 * 1024 * 1024
+    }));
+
+    const summary = repository.getPendingManualDownloadSummary();
+
+    assert.strictEqual(summary.fileCount, 1);
+    assert.strictEqual(summary.totalKnownSize, 10 * 1024 * 1024);
+  });
+}
+
 function testGetShownToUserFilesReturnsShownRecords() {
   withRepository((repository) => {
     repository.create(createRecord({
@@ -296,6 +323,39 @@ function testGetStatsAggregatesFiles() {
     assert.strictEqual(stats.documentFiles, 2);
     assert.strictEqual(stats.photoFiles, 1);
     assert.strictEqual(stats.videoFiles, 1);
+  });
+}
+
+function testGetStatsUsesMetaDuplicateCounterAndDeleteFailures() {
+  withRepository((repository) => {
+    repository.incrementMetaCounter('duplicate_skipped_count', 3, '2026-05-16T10:05:00.000Z');
+    repository.create(createRecord({
+      file_id: 'doc-downloaded-delete-failed',
+      file_unique_id: 'doc-downloaded-delete-failed-unique',
+      file_kind: 'document',
+      file_size: 10 * 1024 * 1024,
+      status: 'downloaded',
+      error_code: 'delete_message_failed',
+      error_message: 'cannot delete',
+      queue_position: null
+    }));
+
+    const stats = repository.getStats();
+
+    assert.strictEqual(stats.duplicateFiles, 3);
+    assert.strictEqual(stats.failedFiles, 1);
+  });
+}
+
+function testIncrementMetaCounterCreatesAndUpdatesCounter() {
+  withRepository((repository) => {
+    const first = repository.incrementMetaCounter('duplicate_skipped_count', 2, '2026-05-16T10:05:00.000Z');
+    const second = repository.incrementMetaCounter('duplicate_skipped_count', 5, '2026-05-16T10:10:00.000Z');
+
+    assert.strictEqual(first.key, 'duplicate_skipped_count');
+    assert.strictEqual(first.value, '2');
+    assert.strictEqual(second.value, '7');
+    assert.strictEqual(repository.getStats().duplicateFiles, 7);
   });
 }
 
