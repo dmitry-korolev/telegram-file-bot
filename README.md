@@ -1,5 +1,7 @@
 # Telegram File Bot
 
+English | [Русский](README.ru.md)
+
 Telegram bot for processing `document`, `photo`, and `video` attachments with automatic small-file downloads and a shared manual-download queue for large files.
 
 ## Run
