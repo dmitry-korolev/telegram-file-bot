@@ -98,15 +98,26 @@ function buildStatsMessage(stats) {
 
   return [
     'Статистика бота:',
+    '',
+    'Хранилище:',
     `Всего файлов: ${normalizedStats.totalFiles || 0}`,
-    `Общий известный объем: ${formatFileSize(normalizedStats.totalKnownSize || 0)}`,
-    `Активная очередь: ${normalizedStats.activeQueueFiles || 0} файлов, ${formatFileSize(normalizedStats.activeQueueKnownSize || 0)}`,
-    `Скачано автоматически: ${normalizedStats.downloadedFiles || 0}`,
+    `Общий известный объем файлов: ${formatFileSize(normalizedStats.totalKnownSize || 0)}`,
+    `Размер БД: ${formatFileSize(normalizedStats.databaseSizeBytes || 0)}`,
+    '',
+    'Обработка:',
+    `Скачано автоматически: ${normalizedStats.downloadedFiles || 0} файлов, ${formatFileSize(normalizedStats.downloadedKnownSize || 0)}`,
     `Подтверждено ручных скачиваний: ${normalizedStats.downloadConfirmedFiles || 0}`,
     `Отсеяно дубликатов: ${normalizedStats.duplicateFiles || 0}`,
     `Ошибок: ${normalizedStats.failedFiles || 0}`,
-    `Типы: documents - ${normalizedStats.documentFiles || 0}, photos - ${normalizedStats.photoFiles || 0}, videos - ${normalizedStats.videoFiles || 0}`,
-    `Файлов с неизвестным размером: ${normalizedStats.unknownSizeFiles || 0}`
+    '',
+    'Очередь:',
+    `Активная очередь: ${normalizedStats.activeQueueFiles || 0} файлов, ${formatFileSize(normalizedStats.activeQueueKnownSize || 0)}`,
+    `Файлов с неизвестным размером: ${normalizedStats.unknownSizeFiles || 0}`,
+    '',
+    'Типы вложений:',
+    `Documents: ${normalizedStats.documentFiles || 0}`,
+    `Photos: ${normalizedStats.photoFiles || 0}`,
+    `Videos: ${normalizedStats.videoFiles || 0}`
   ].join('\n');
 }
 

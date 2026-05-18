@@ -395,10 +395,13 @@ function testGetStatsAggregatesFiles() {
 
     assert.strictEqual(stats.totalFiles, 4);
     assert.strictEqual(stats.totalKnownSize, 38 * 1024 * 1024);
+    assert.strictEqual(Number.isInteger(stats.databaseSizeBytes), true);
+    assert.strictEqual(stats.databaseSizeBytes > 0, true);
     assert.strictEqual(stats.unknownSizeFiles, 1);
     assert.strictEqual(stats.activeQueueFiles, 1);
     assert.strictEqual(stats.activeQueueKnownSize, 25 * 1024 * 1024);
     assert.strictEqual(stats.downloadedFiles, 1);
+    assert.strictEqual(stats.downloadedKnownSize, 10 * 1024 * 1024);
     assert.strictEqual(stats.downloadConfirmedFiles, 1);
     assert.strictEqual(stats.failedFiles, 1);
     assert.strictEqual(stats.documentFiles, 2);

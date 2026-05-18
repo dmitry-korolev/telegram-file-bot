@@ -114,7 +114,7 @@ function createTelegramUpdateHandler(dependencies) {
     let deleteMessageCalled = false;
     let deleteMessageError = null;
 
-    if (processedMessage.attachments.length > 0) {
+    if (processedMessage.attachments.length > 0 && !hasProcessingFailure(files)) {
       deleteMessageCalled = true;
 
       try {
@@ -435,6 +435,10 @@ function createTelegramUpdateHandler(dependencies) {
 
   function countPendingFiles(files) {
     return files.filter((file) => file.status === 'pending_manual_download' || file.status === 'pending_size_unknown').length;
+  }
+
+  function hasProcessingFailure(files) {
+    return files.some((file) => file && typeof file.status === 'string' && file.status.endsWith('_failed'));
   }
 
   async function getRemainingManualDownloadCount() {

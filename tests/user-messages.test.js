@@ -28,9 +28,11 @@ function testStatsMessage() {
   const response = buildStatsMessage({
     totalFiles: 4,
     totalKnownSize: 38 * 1024 * 1024,
+    databaseSizeBytes: 128 * 1024,
     activeQueueFiles: 1,
     activeQueueKnownSize: 25 * 1024 * 1024,
     downloadedFiles: 1,
+    downloadedKnownSize: 10 * 1024 * 1024,
     downloadConfirmedFiles: 1,
     duplicateFiles: 0,
     failedFiles: 1,
@@ -41,6 +43,12 @@ function testStatsMessage() {
   });
 
   assert.strictEqual(response.includes('Всего файлов: 4'), true);
+  assert.strictEqual(response.includes('Хранилище:'), true);
+  assert.strictEqual(response.includes('Обработка:'), true);
+  assert.strictEqual(response.includes('Очередь:'), true);
+  assert.strictEqual(response.includes('Типы вложений:'), true);
+  assert.strictEqual(response.includes('Размер БД: 128 КБ'), true);
+  assert.strictEqual(response.includes('Скачано автоматически: 1 файлов, 10.0 МБ'), true);
   assert.strictEqual(response.includes('Активная очередь: 1 файлов, 25.0 МБ'), true);
   assert.strictEqual(response.includes('Отсеяно дубликатов: 0'), true);
   assert.strictEqual(response.includes('Ошибок: 1'), true);

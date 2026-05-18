@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('fs');
 const { toSqlValue } = require('./sqlite-client');
 
 function createTelegramUserFilesRepository(sqliteClient) {
@@ -263,6 +264,7 @@ function createTelegramUserFilesRepository(sqliteClient) {
         SUM(CASE WHEN status IN ('pending_manual_download', 'pending_size_unknown', 'shown_to_user') THEN 1 ELSE 0 END) AS active_queue_files,
         COALESCE(SUM(CASE WHEN status IN ('pending_manual_download', 'pending_size_unknown', 'shown_to_user') AND file_size IS NOT NULL THEN file_size ELSE 0 END), 0) AS active_queue_known_size,
         SUM(CASE WHEN status = 'downloaded' THEN 1 ELSE 0 END) AS downloaded_files,
+        COALESCE(SUM(CASE WHEN status = 'downloaded' AND file_size IS NOT NULL THEN file_size ELSE 0 END), 0) AS downloaded_known_size,
         SUM(CASE WHEN status = 'download_confirmed' THEN 1 ELSE 0 END) AS download_confirmed_files,
         COALESCE((
           SELECT CAST(value AS INTEGER)
@@ -276,7 +278,10 @@ function createTelegramUserFilesRepository(sqliteClient) {
       FROM telegram_user_files;
     `);
 
-    return normalizeStatsRow(totals[0] || {});
+    const row = totals[0] || {};
+    row.database_size_bytes = getDatabaseSizeBytes(sqliteClient.databasePath);
+
+    return normalizeStatsRow(row);
   }
 
   function getNextQueuePosition() {
@@ -536,10 +541,12 @@ function normalizeStatsRow(row) {
   return {
     totalFiles: normalizeStatNumber(row.total_files),
     totalKnownSize: normalizeStatNumber(row.total_known_size),
+    databaseSizeBytes: normalizeStatNumber(row.database_size_bytes),
     unknownSizeFiles: normalizeStatNumber(row.unknown_size_files),
     activeQueueFiles: normalizeStatNumber(row.active_queue_files),
     activeQueueKnownSize: normalizeStatNumber(row.active_queue_known_size),
     downloadedFiles: normalizeStatNumber(row.downloaded_files),
+    downloadedKnownSize: normalizeStatNumber(row.downloaded_known_size),
     downloadConfirmedFiles: normalizeStatNumber(row.download_confirmed_files),
     duplicateFiles: normalizeStatNumber(row.duplicate_files),
     failedFiles: normalizeStatNumber(row.failed_files),
@@ -559,6 +566,22 @@ function normalizeQueueSummaryRow(row) {
 
 function normalizeStatNumber(value) {
   return Number.isFinite(value) ? value : 0;
+}
+
+function getDatabaseSizeBytes(databasePath) {
+  if (!databasePath) {
+    return 0;
+  }
+
+  try {
+    return fs.statSync(databasePath).size;
+  } catch (error) {
+    if (error && error.code === 'ENOENT') {
+      return 0;
+    }
+
+    throw error;
+  }
 }
 
 module.exports = {

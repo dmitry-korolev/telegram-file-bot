@@ -192,6 +192,8 @@ async function testSmallDownloadFailureCreatesFailedRecordAndResponds() {
   assert.strictEqual(deps.fileRepository.records[0].error_code, 'download_failed');
   assert.strictEqual(deps.fileRepository.records[0].error_message, 'Cannot download doc-small');
   assert.strictEqual(deps.fileRepository.records[0].local_path, null);
+  assert.strictEqual(result.deleteMessageCalled, false);
+  assert.strictEqual(deps.messageDeleter.calls.length, 0);
   assert.strictEqual(deps.messageSender.calls[0].text, 'Файл "file" не удалось скачать.');
   assert.strictEqual(deps.fileRepository.events.some((event) => event.event_type === 'download_failed'), true);
 }
