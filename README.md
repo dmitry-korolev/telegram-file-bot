@@ -48,9 +48,9 @@ Available commands:
 
 Available buttons:
 
-- `Показать следующие вложения` — starts sending queued files.
-- `Подтвердить скачивание и показать следующие` — confirms the previous batch as downloaded, then sends the next batch of up to 10 queued files.
-- `Подтвердить скачивание` — confirms the final shown batch when there are no more queued files.
+- `Показать следующие вложения` — sends the next batch of up to 10 queued files. Successfully sent files are immediately marked as `download_confirmed`.
+- `10 самых больших` — sends up to 10 queued files with the largest known size.
+- `10 самых маленьких` — sends up to 10 queued files with the smallest known size.
 - `Очистить очередь` — confirms `/clear_queue`.
 - `Отмена` — cancels queue cleanup.
 
@@ -60,8 +60,7 @@ Manual download flow:
 2. Use `/queue` to inspect the queue.
 3. Press `Показать следующие вложения`.
 4. Download the shown files in Telegram.
-5. Press `Подтвердить скачивание и показать следующие` to confirm the previous batch and receive the next one.
-6. For the final batch, press `Подтвердить скачивание`.
+5. If the queue still has files, press `Показать следующие вложения` again to receive the next batch.
 
 The bot prioritizes large `photo` and `video` files before `document` files.
 
