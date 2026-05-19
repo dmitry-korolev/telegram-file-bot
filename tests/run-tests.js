@@ -5,7 +5,9 @@ const tests = [
   require('./polling.test'),
   require('./process-supervisor.test'),
   require('./process-message.test'),
+  require('./stats-image.test'),
   require('./sqlite-repository.test'),
+  require('./telegram-client.test'),
   require('./telegram-file-downloader.test'),
   require('./telegram-update-handler.test'),
   require('./user-messages.test')

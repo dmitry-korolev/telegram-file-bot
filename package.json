@@ -14,5 +14,8 @@
     "bot",
     "files"
   ],
-  "license": "UNLICENSED"
+  "license": "UNLICENSED",
+  "dependencies": {
+    "sharp": "^0.34.5"
+  }
 }

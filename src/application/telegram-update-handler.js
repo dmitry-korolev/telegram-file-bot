@@ -245,6 +245,35 @@ function createTelegramUpdateHandler(dependencies) {
       };
     }
 
+    if (commandName === '/stats_image') {
+      if (!deps.statsImageRenderer || typeof deps.statsImageRenderer.renderStatsImage !== 'function') {
+        throw new Error('statsImageRenderer.renderStatsImage is required');
+      }
+
+      if (typeof deps.fileRepository.getStatsImageData !== 'function') {
+        throw new Error('fileRepository.getStatsImageData is required');
+      }
+
+      const statsImageData = await deps.fileRepository.getStatsImageData();
+      const photoBuffer = await deps.statsImageRenderer.renderStatsImage(statsImageData);
+
+      await deps.fileSender.sendPhoto({
+        chatId: message.chat && message.chat.id,
+        photoBuffer,
+        filename: 'stats.png',
+        caption: 'Статистика бота'
+      });
+
+      return {
+        accepted: true,
+        reason: 'stats_image_command',
+        files: [],
+        deleteMessageCalled: false,
+        sendMessageCalled: true,
+        responseText: null
+      };
+    }
+
     if (commandName === '/clear_queue') {
       const text = buildClearQueuePrompt();
 

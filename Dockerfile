@@ -2,7 +2,10 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-COPY package.json ./
+COPY package.json package-lock.json ./
+RUN apk add --no-cache sqlite
+RUN npm ci
+
 COPY src ./src
 COPY tests ./tests
 COPY README.md ./

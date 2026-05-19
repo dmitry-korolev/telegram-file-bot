@@ -9,6 +9,7 @@ function createTelegramClient(options) {
   const minRequestIntervalMs = options && Number.isFinite(options.minRequestIntervalMs)
     ? options.minRequestIntervalMs
     : 0;
+  const requestFn = options && options.requestFn ? options.requestFn : https.request;
   let nextRequestAt = 0;
 
   if (!token || token === 'fake-token' || token === 'replace-me-with-a-fake-token-for-local-dev') {
@@ -49,6 +50,18 @@ function createTelegramClient(options) {
   }
 
   async function sendPhoto(payload) {
+    if (payload.photoBuffer) {
+      return callApiMultipart('sendPhoto', {
+        chat_id: payload.chatId,
+        caption: payload.caption || null
+      }, {
+        fieldName: 'photo',
+        filename: payload.filename || 'photo.png',
+        contentType: 'image/png',
+        buffer: payload.photoBuffer
+      });
+    }
+
     return callApi('sendPhoto', {
       chat_id: payload.chatId,
       photo: payload.fileId
@@ -115,7 +128,45 @@ function createTelegramClient(options) {
     const body = JSON.stringify(params || {});
 
     return new Promise((resolve, reject) => {
-      const request = https.request(createApiRequestOptions(method, body), (response) => {
+      const request = requestFn(createApiRequestOptions(method, body), (response) => {
+        let responseBody = '';
+
+        response.setEncoding('utf8');
+        response.on('data', (chunk) => {
+          responseBody += chunk;
+        });
+        response.on('end', () => {
+          let parsed;
+
+          try {
+            parsed = JSON.parse(responseBody);
+          } catch (error) {
+            reject(new Error(`Telegram API returned invalid JSON for ${method}`));
+            return;
+          }
+
+          if (!parsed.ok) {
+            reject(new Error(`Telegram API ${method} failed: ${parsed.description || 'unknown error'}`));
+            return;
+          }
+
+          resolve(parsed.result);
+        });
+      });
+
+      request.on('error', reject);
+      request.write(body);
+      request.end();
+    });
+  }
+
+  async function callApiMultipart(method, params, file) {
+    await waitForRequestSlot();
+    const boundary = `telegram-file-bot-${Date.now().toString(16)}`;
+    const body = buildMultipartBody(boundary, params, file);
+
+    return new Promise((resolve, reject) => {
+      const request = requestFn(createMultipartRequestOptions(method, body, boundary), (response) => {
         let responseBody = '';
 
         response.setEncoding('utf8');
@@ -173,9 +224,54 @@ function createTelegramClient(options) {
     };
   }
 
+  function createMultipartRequestOptions(method, body, boundary) {
+    return {
+      hostname: 'api.telegram.org',
+      path: `/bot${token}/${method}`,
+      method: 'POST',
+      headers: {
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+        'Content-Length': body.length
+      }
+    };
+  }
+
   function createFileUrl(filePath) {
     return `https://api.telegram.org/file/bot${token}/${filePath}`;
   }
+}
+
+function buildMultipartBody(boundary, params, file) {
+  const parts = [];
+  const normalizedParams = params || {};
+
+  Object.keys(normalizedParams).forEach((key) => {
+    const value = normalizedParams[key];
+
+    if (value === undefined || value === null || value === '') {
+      return;
+    }
+
+    parts.push(Buffer.from(
+      `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="${escapeMultipartName(key)}"\r\n\r\n` +
+      `${String(value)}\r\n`
+    ));
+  });
+
+  parts.push(Buffer.from(
+    `--${boundary}\r\n` +
+    `Content-Disposition: form-data; name="${escapeMultipartName(file.fieldName)}"; filename="${escapeMultipartName(file.filename)}"\r\n` +
+    `Content-Type: ${file.contentType}\r\n\r\n`
+  ));
+  parts.push(Buffer.isBuffer(file.buffer) ? file.buffer : Buffer.from(file.buffer));
+  parts.push(Buffer.from(`\r\n--${boundary}--\r\n`));
+
+  return Buffer.concat(parts);
+}
+
+function escapeMultipartName(value) {
+  return String(value).replace(/"/g, '%22').replace(/\r/g, '').replace(/\n/g, '');
 }
 
 function delay(ms) {
@@ -184,5 +280,6 @@ function delay(ms) {
 
 module.exports = {
   createTelegramClient,
+  buildMultipartBody,
   delay
 };

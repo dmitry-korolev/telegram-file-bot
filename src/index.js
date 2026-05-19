@@ -11,6 +11,7 @@ const { createSqliteClient } = require('./adapters/sqlite/sqlite-client');
 const { createTelegramUserFilesRepository } = require('./adapters/sqlite/telegram-user-files-repository');
 const { createTelegramClient } = require('./adapters/telegram/client');
 const { createTelegramFileDownloader } = require('./adapters/telegram/file-downloader');
+const { createStatsImageRenderer } = require('./application/stats-image-renderer');
 
 async function main() {
   loadEnvFile();
@@ -31,6 +32,7 @@ async function main() {
     telegramClient,
     downloadsDir: config.downloadsDir
   });
+  const statsImageRenderer = createStatsImageRenderer();
   const updateHandler = createTelegramUpdateHandler({
     authorizedUserIds: config.authorizedUserIds,
     smallFileLimitBytes: config.smallFileLimitBytes,
@@ -39,6 +41,7 @@ async function main() {
     messageDeleter: telegramClient,
     messageSender: telegramClient,
     fileSender: telegramClient,
+    statsImageRenderer,
     callbackResponder: telegramClient,
     nextQueuePosition: () => fileRepository.getNextQueuePosition(),
     mediaGroupResponseDelayMs: config.mediaGroupResponseDelayMs

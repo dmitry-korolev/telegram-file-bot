@@ -18,6 +18,7 @@ function createTelegramUserFilesRepository(sqliteClient) {
     getPendingManualDownloadSummary,
     getShownToUserFiles,
     getStats,
+    getStatsImageData,
     getNextQueuePosition,
     createFileEvent,
     incrementMetaCounter,
@@ -282,6 +283,49 @@ function createTelegramUserFilesRepository(sqliteClient) {
     row.database_size_bytes = getDatabaseSizeBytes(sqliteClient.databasePath);
 
     return normalizeStatsRow(row);
+  }
+
+  function getStatsImageData() {
+    const stats = getStats();
+    const sizeBucketRows = sqliteClient.query(`
+      SELECT
+        SUM(CASE WHEN file_size >= 0 AND file_size < ${1 * 1024 * 1024} THEN 1 ELSE 0 END) AS bucket_0_1_mb,
+        SUM(CASE WHEN file_size >= ${1 * 1024 * 1024} AND file_size < ${5 * 1024 * 1024} THEN 1 ELSE 0 END) AS bucket_1_5_mb,
+        SUM(CASE WHEN file_size >= ${5 * 1024 * 1024} AND file_size < ${20 * 1024 * 1024} THEN 1 ELSE 0 END) AS bucket_5_20_mb,
+        SUM(CASE WHEN file_size >= ${20 * 1024 * 1024} AND file_size < ${50 * 1024 * 1024} THEN 1 ELSE 0 END) AS bucket_20_50_mb,
+        SUM(CASE WHEN file_size >= ${50 * 1024 * 1024} AND file_size < ${100 * 1024 * 1024} THEN 1 ELSE 0 END) AS bucket_50_100_mb,
+        SUM(CASE WHEN file_size >= ${100 * 1024 * 1024} AND file_size < ${500 * 1024 * 1024} THEN 1 ELSE 0 END) AS bucket_100_500_mb,
+        SUM(CASE WHEN file_size >= ${500 * 1024 * 1024} AND file_size < ${1000 * 1024 * 1024} THEN 1 ELSE 0 END) AS bucket_500_1000_mb,
+        SUM(CASE WHEN file_size >= ${1000 * 1024 * 1024} THEN 1 ELSE 0 END) AS bucket_1000_plus_mb
+      FROM telegram_user_files
+      WHERE file_size IS NOT NULL;
+    `);
+    const bucketRow = sizeBucketRows[0] || {};
+
+    return {
+      stats,
+      sizeBuckets: {
+        '0_1_mb': normalizeStatNumber(bucketRow.bucket_0_1_mb),
+        '1_5_mb': normalizeStatNumber(bucketRow.bucket_1_5_mb),
+        '5_20_mb': normalizeStatNumber(bucketRow.bucket_5_20_mb),
+        '20_50_mb': normalizeStatNumber(bucketRow.bucket_20_50_mb),
+        '50_100_mb': normalizeStatNumber(bucketRow.bucket_50_100_mb),
+        '100_500_mb': normalizeStatNumber(bucketRow.bucket_100_500_mb),
+        '500_1000_mb': normalizeStatNumber(bucketRow.bucket_500_1000_mb),
+        '1000_plus_mb': normalizeStatNumber(bucketRow.bucket_1000_plus_mb)
+      },
+      kindCounts: {
+        document: stats.documentFiles,
+        photo: stats.photoFiles,
+        video: stats.videoFiles
+      },
+      statusCounts: {
+        downloaded: stats.downloadedFiles,
+        queue: stats.activeQueueFiles,
+        confirmed: stats.downloadConfirmedFiles,
+        failed: stats.failedFiles
+      }
+    };
   }
 
   function getNextQueuePosition() {

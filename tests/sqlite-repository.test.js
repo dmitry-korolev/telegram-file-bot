@@ -21,6 +21,7 @@ function runTests() {
   testPendingManualDownloadSummaryExcludesShownRecords();
   testGetShownToUserFilesReturnsShownRecords();
   testGetStatsAggregatesFiles();
+  testGetStatsImageDataAggregatesBuckets();
   testGetStatsUsesMetaDuplicateCounterAndDeleteFailures();
   testIncrementMetaCounterCreatesAndUpdatesCounter();
   testGetNextQueuePositionUsesExistingMaximum();
@@ -428,6 +429,66 @@ function testGetStatsUsesMetaDuplicateCounterAndDeleteFailures() {
 
     assert.strictEqual(stats.duplicateFiles, 3);
     assert.strictEqual(stats.failedFiles, 1);
+  });
+}
+
+function testGetStatsImageDataAggregatesBuckets() {
+  withRepository((repository) => {
+    repository.create(createRecord({
+      file_id: 'small',
+      file_unique_id: 'small-unique',
+      file_size: 512 * 1024,
+      file_kind: 'document',
+      status: 'downloaded',
+      queue_position: null
+    }));
+    repository.create(createRecord({
+      file_id: 'medium',
+      file_unique_id: 'medium-unique',
+      file_size: 25 * 1024 * 1024,
+      file_kind: 'photo',
+      status: 'pending_manual_download',
+      queue_position: 1
+    }));
+    repository.create(createRecord({
+      file_id: 'large',
+      file_unique_id: 'large-unique',
+      file_size: 750 * 1024 * 1024,
+      file_kind: 'video',
+      status: 'download_confirmed',
+      queue_position: 2
+    }));
+    repository.create(createRecord({
+      file_id: 'huge',
+      file_unique_id: 'huge-unique',
+      file_size: 1000 * 1024 * 1024,
+      file_kind: 'video',
+      status: 'send_failed',
+      queue_position: 3
+    }));
+    repository.create(createRecord({
+      file_id: 'unknown',
+      file_unique_id: 'unknown-unique',
+      file_size: null,
+      file_kind: 'document',
+      status: 'pending_size_unknown',
+      queue_position: 4
+    }));
+
+    const data = repository.getStatsImageData();
+
+    assert.strictEqual(data.stats.totalFiles, 5);
+    assert.strictEqual(data.sizeBuckets['0_1_mb'], 1);
+    assert.strictEqual(data.sizeBuckets['20_50_mb'], 1);
+    assert.strictEqual(data.sizeBuckets['500_1000_mb'], 1);
+    assert.strictEqual(data.sizeBuckets['1000_plus_mb'], 1);
+    assert.strictEqual(data.kindCounts.document, 2);
+    assert.strictEqual(data.kindCounts.photo, 1);
+    assert.strictEqual(data.kindCounts.video, 2);
+    assert.strictEqual(data.statusCounts.downloaded, 1);
+    assert.strictEqual(data.statusCounts.queue, 2);
+    assert.strictEqual(data.statusCounts.confirmed, 1);
+    assert.strictEqual(data.statusCounts.failed, 1);
   });
 }
 

@@ -44,6 +44,7 @@ Available commands:
 
 - `/queue` — show the shared queue summary: file count and total known size.
 - `/stats` — show aggregate bot statistics: total files, known total size, active queue size, downloaded files, confirmed manual downloads, duplicates, errors, and attachment types.
+- `/stats_image` — send aggregate bot statistics as a PNG image with charts for file sizes, attachment types, and processing statuses.
 - `/clear_queue` — ask for confirmation before clearing the shared queue. Confirmed cleanup marks active queue records as `deleted_by_user`.
 
 Available buttons:

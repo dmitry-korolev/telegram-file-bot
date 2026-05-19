@@ -30,6 +30,7 @@ async function runTests() {
   await testSeparateMediaGroupsDoNotMixResponses();
   await testQueueCommandShowsQueue();
   await testStatsCommandShowsAggregateStats();
+  await testStatsImageCommandSendsPngPhoto();
   await testClearQueueCommandRequestsConfirmation();
   await testConfirmClearQueueMarksRecordsDeleted();
   await testUnauthorizedCallbackIsIgnored();
@@ -70,6 +71,37 @@ async function testStatsCommandShowsAggregateStats() {
   assert.strictEqual(deps.messageSender.calls.length, 1);
   assert.strictEqual(deps.messageSender.calls[0].text.includes('Статистика бота:'), true);
   assert.strictEqual(deps.messageSender.calls[0].text.includes('Всего файлов: 4'), true);
+}
+
+async function testStatsImageCommandSendsPngPhoto() {
+  const statsImageData = {
+    stats: {
+      totalFiles: 4,
+      totalKnownSize: 38 * 1024 * 1024
+    },
+    sizeBuckets: {
+      '20_50_mb': 4
+    }
+  };
+  const deps = createMockDependencies({
+    statsImageData,
+    statsImageBuffer: Buffer.from('png-data')
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 20,
+    message: createMessage({ text: '/stats_image' })
+  });
+
+  assert.strictEqual(result.reason, 'stats_image_command');
+  assert.strictEqual(deps.statsImageRenderer.calls.length, 1);
+  assert.strictEqual(deps.statsImageRenderer.calls[0], statsImageData);
+  assert.strictEqual(deps.fileSender.calls.length, 1);
+  assert.strictEqual(deps.fileSender.calls[0].method, 'sendPhoto');
+  assert.strictEqual(deps.fileSender.calls[0].filename, 'stats.png');
+  assert.strictEqual(deps.fileSender.calls[0].caption, 'Статистика бота');
+  assert.deepStrictEqual(deps.fileSender.calls[0].photoBuffer, Buffer.from('png-data'));
 }
 
 async function testExtractsSupportedAttachmentsAndIgnoresUnsupported() {
@@ -794,6 +826,23 @@ function createMockDependencies(options) {
         unknownSizeFiles: 0
       };
     },
+    async getStatsImageData() {
+      return normalizedOptions.statsImageData || {
+        stats: await this.getStats(),
+        sizeBuckets: {},
+        kindCounts: {
+          document: 0,
+          photo: 0,
+          video: 0
+        },
+        statusCounts: {
+          downloaded: 0,
+          queue: 0,
+          confirmed: 0,
+          failed: 0
+        }
+      };
+    },
     async markFilesAsShownToUser(recordIds) {
       this.shownIds.push(...recordIds);
       this.pendingQueue = this.pendingQueue.map((record) => (
@@ -888,6 +937,14 @@ function createMockDependencies(options) {
     }
   };
 
+  const statsImageRenderer = {
+    calls: [],
+    async renderStatsImage(data) {
+      this.calls.push(data);
+      return normalizedOptions.statsImageBuffer || Buffer.from('png');
+    }
+  };
+
   const callbackResponder = {
     calls: [],
     async answerCallbackQuery(payload) {
@@ -903,6 +960,7 @@ function createMockDependencies(options) {
     messageDeleter,
     messageSender,
     fileSender,
+    statsImageRenderer,
     callbackResponder,
     nextQueuePosition: async () => {
       queuePosition += 1;
