@@ -10,3 +10,4 @@
 6. Use the configured small-file limit from configuration, defaulting to `20 * 1024 * 1024` bytes.
 7. Keep modules small and explicit. New behavior should be covered by unit tests before adding transport-level wiring.
 8. Preserve CommonJS unless the project is intentionally migrated and the test runner is updated with it.
+9. Commit messages created by Codex must follow the style in `REQUIREMENTS.md` section 17.2.1: short technical prefix, loud uppercase Russian headline, confident tone, and a dramatic short body that states the problem and result.
