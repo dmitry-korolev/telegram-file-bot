@@ -5,8 +5,11 @@ const assert = require('assert');
 const {
   CALLBACK_CANCEL_CLEAR_QUEUE,
   CALLBACK_CONFIRM_CLEAR_QUEUE,
+  CALLBACK_SHOW_LARGEST_ARCHIVE_FILES,
   CALLBACK_SHOW_LARGEST_FILES,
+  CALLBACK_SHOW_NEXT_ARCHIVE_FILES,
   CALLBACK_SHOW_NEXT_FILES,
+  CALLBACK_SHOW_SMALLEST_ARCHIVE_FILES,
   CALLBACK_SHOW_SMALLEST_FILES,
   createTelegramUpdateHandler
 } = require('../src/application/telegram-update-handler');
@@ -29,6 +32,10 @@ async function runTests() {
   await testMediaGroupAggregatesResponseAfterDelay();
   await testSeparateMediaGroupsDoNotMixResponses();
   await testQueueCommandShowsQueue();
+  await testArchiveCommandRequiresReply();
+  await testArchiveCommandReportsUnknownReply();
+  await testArchiveCommandMarksReplyFileArchived();
+  await testShowArchiveCommandShowsArchiveSummary();
   await testStatsCommandShowsAggregateStats();
   await testStatsImageCommandSendsPngPhoto();
   await testClearQueueCommandRequestsConfirmation();
@@ -40,6 +47,7 @@ async function runTests() {
   await testShowNextFilesConfirmsPreviouslyShownFirst();
   await testShowNextFilesUsesQueueSummaryForRemainingCount();
   await testShowNextFilesReportsEmptyQueue();
+  await testShowArchiveFilesSendsAndConfirmsArchivedFiles();
   await testSendFailureMarksOnlyFailedFile();
 }
 
@@ -487,6 +495,91 @@ async function testQueueCommandShowsQueue() {
   assert.deepStrictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[1][1].callback_data, CALLBACK_SHOW_SMALLEST_FILES);
 }
 
+async function testArchiveCommandRequiresReply() {
+  const deps = createMockDependencies();
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 31,
+    message: createMessage({ text: '/archive' })
+  });
+
+  assert.strictEqual(result.reason, 'archive_reply_required');
+  assert.strictEqual(deps.messageSender.calls[0].text, 'Отправьте /archive в ответ на медиа, которое бот прислал из очереди или архива.');
+}
+
+async function testArchiveCommandReportsUnknownReply() {
+  const deps = createMockDependencies();
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 32,
+    message: createMessage({
+      text: '/archive',
+      reply_to_message: {
+        message_id: 7001
+      }
+    })
+  });
+
+  assert.strictEqual(result.reason, 'archive_file_not_found');
+  assert.strictEqual(deps.messageSender.calls[0].text, 'Не удалось найти файл для этого сообщения.');
+}
+
+async function testArchiveCommandMarksReplyFileArchived() {
+  const file = createRepositoryRecord({ id: 41, status: 'download_confirmed' });
+  const deps = createMockDependencies({
+    sentFiles: [
+      {
+        fileRecordId: 41,
+        chatId: 5001,
+        sentMessageId: 7001,
+        source: 'queue'
+      }
+    ],
+    manualQueue: [file],
+    pendingQueue: [file]
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 33,
+    message: createMessage({
+      text: '/archive',
+      reply_to_message: {
+        message_id: 7001
+      }
+    })
+  });
+
+  assert.strictEqual(result.reason, 'archive_command');
+  assert.deepStrictEqual(deps.fileRepository.archivedIds, [41]);
+  assert.strictEqual(deps.fileRepository.events.some((event) => event.event_type === 'archived'), true);
+  assert.strictEqual(deps.messageSender.calls[0].text, 'Файл перемещен в архив.');
+}
+
+async function testShowArchiveCommandShowsArchiveSummary() {
+  const deps = createMockDependencies({
+    archiveSummary: {
+      fileCount: 2,
+      totalKnownSize: 30 * 1024 * 1024,
+      unknownSizeFiles: 0
+    }
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 34,
+    message: createMessage({ text: '/show_archive' })
+  });
+
+  assert.strictEqual(result.reason, 'show_archive_command');
+  assert.strictEqual(deps.messageSender.calls[0].text, 'В архиве файлов: 2. Суммарный объем: 30.0 МБ.');
+  assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].callback_data, CALLBACK_SHOW_NEXT_ARCHIVE_FILES);
+  assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[1][0].callback_data, CALLBACK_SHOW_LARGEST_ARCHIVE_FILES);
+  assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[1][1].callback_data, CALLBACK_SHOW_SMALLEST_ARCHIVE_FILES);
+}
+
 async function testClearQueueCommandRequestsConfirmation() {
   const deps = createMockDependencies();
   const handler = createTelegramUpdateHandler(deps);
@@ -683,6 +776,33 @@ async function testShowNextFilesReportsEmptyQueue() {
   assert.deepStrictEqual(deps.fileSender.calls, []);
 }
 
+async function testShowArchiveFilesSendsAndConfirmsArchivedFiles() {
+  const deps = createMockDependencies({
+    archiveQueue: [
+      createRepositoryRecord({ id: 50, file_id: 'archived-photo', file_unique_id: 'archived-photo-unique', file_kind: 'photo', status: 'archived' }),
+      createRepositoryRecord({ id: 51, file_id: 'archived-video', file_unique_id: 'archived-video-unique', file_kind: 'video', status: 'archived' })
+    ]
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 35,
+    callback_query: createCallbackQuery(CALLBACK_SHOW_NEXT_ARCHIVE_FILES)
+  });
+
+  assert.strictEqual(result.reason, 'archive_batch_shown');
+  assert.deepStrictEqual(deps.fileRepository.confirmedIds, [50, 51]);
+  assert.deepStrictEqual(
+    deps.fileRepository.sentFiles.map((sentFile) => sentFile.source),
+    ['archive', 'archive']
+  );
+  assert.deepStrictEqual(
+    deps.fileRepository.sentFiles.map((sentFile) => sentFile.file_record_id),
+    [50, 51]
+  );
+  assert.strictEqual(deps.messageSender.calls[0].text, 'Показано вложений из архива: 2. Они отмечены как скачанные. Осталось в архиве: 0.');
+}
+
 async function testSendFailureMarksOnlyFailedFile() {
   const deps = createMockDependencies({
     pendingQueue: [
@@ -715,17 +835,21 @@ function createMockDependencies(options) {
     records: [],
     pendingQueue: normalizedOptions.pendingQueue || [],
     manualQueue: normalizedOptions.manualQueue || normalizedOptions.pendingQueue || [],
+    archiveQueue: normalizedOptions.archiveQueue || [],
     queueSummary: normalizedOptions.queueSummary || null,
     pendingSummary: normalizedOptions.pendingSummary || null,
+    archiveSummary: normalizedOptions.archiveSummary || null,
     shownQueue: normalizedOptions.shownQueue || [],
     lastPendingQueueOptions: null,
     shownIds: [],
     confirmedIds: [],
+    archivedIds: [],
     sendFailedIds: [],
     deletedRecords: [],
     deleteFailedIds: [],
     metaCounters: {},
     events: [],
+    sentFiles: normalizedOptions.sentFiles || [],
     async findByFileUniqueId(fileUniqueId) {
       if (existingFileUniqueIds.has(fileUniqueId)) {
         return { id: 9001, file_unique_id: fileUniqueId };
@@ -742,6 +866,29 @@ function createMockDependencies(options) {
       const created = Object.assign({ id: this.events.length + 1 }, event);
       this.events.push(created);
       return created;
+    },
+    async createSentFile(sentFile) {
+      const created = Object.assign({ id: this.sentFiles.length + 1 }, sentFile);
+      this.sentFiles.push(created);
+      return created;
+    },
+    async findFileBySentMessage(chatId, sentMessageId) {
+      const sentFile = this.sentFiles.find((item) => (
+        item.chat_id === chatId && item.sent_message_id === sentMessageId
+      )) || this.sentFiles.find((item) => (
+        item.chatId === chatId && item.sentMessageId === sentMessageId
+      ));
+
+      if (!sentFile) {
+        return null;
+      }
+
+      const recordId = sentFile.file_record_id || sentFile.fileRecordId;
+      return this.records
+        .concat(this.pendingQueue)
+        .concat(this.manualQueue)
+        .concat(this.archiveQueue)
+        .find((record) => record.id === recordId) || null;
     },
     async incrementMetaCounter(key, incrementBy) {
       const increment = Number.isInteger(incrementBy) ? incrementBy : 1;
@@ -807,6 +954,44 @@ function createMockDependencies(options) {
 
       return this.pendingQueue.filter((record) => record.status === 'pending_manual_download' && record.file_kind === 'document').slice(0, limit);
     },
+    async getArchiveQueue(options) {
+      const limit = options && options.limit ? options.limit : 10;
+      const orderBy = options && options.orderBy ? options.orderBy : 'queue';
+
+      if (orderBy === 'size_desc' || orderBy === 'size_asc') {
+        return this.archiveQueue
+          .filter((record) => record.status === 'archived' && Number.isFinite(record.file_size))
+          .slice()
+          .sort((left, right) => (
+            orderBy === 'size_desc'
+              ? right.file_size - left.file_size
+              : left.file_size - right.file_size
+          ))
+          .slice(0, limit);
+      }
+
+      const media = this.archiveQueue.filter((record) => record.status === 'archived' && ['photo', 'video'].includes(record.file_kind));
+
+      if (media.length > 0) {
+        return media.slice(0, limit);
+      }
+
+      return this.archiveQueue.filter((record) => record.status === 'archived' && record.file_kind === 'document').slice(0, limit);
+    },
+    async getArchiveSummary() {
+      if (this.archiveSummary) {
+        return this.archiveSummary;
+      }
+
+      const archived = this.archiveQueue.filter((record) => record.status === 'archived');
+      return {
+        fileCount: archived.length,
+        totalKnownSize: archived.reduce((sum, record) => (
+          Number.isFinite(record.file_size) ? sum + record.file_size : sum
+        ), 0),
+        unknownSizeFiles: archived.filter((record) => !Number.isFinite(record.file_size)).length
+      };
+    },
     async getShownToUserFiles() {
       return this.shownQueue;
     },
@@ -861,8 +1046,34 @@ function createMockDependencies(options) {
       this.manualQueue = this.manualQueue.map((record) => (
         recordIds.includes(record.id) ? Object.assign({}, record, { status: 'download_confirmed' }) : record
       ));
+      this.archiveQueue = this.archiveQueue.map((record) => (
+        recordIds.includes(record.id) ? Object.assign({}, record, { status: 'download_confirmed' }) : record
+      ));
       this.shownQueue = this.shownQueue.filter((record) => !recordIds.includes(record.id));
-      return recordIds.map((id) => Object.assign({}, this.pendingQueue.find((record) => record.id === id), { id, status: 'download_confirmed' }));
+      return recordIds.map((id) => Object.assign(
+        {},
+        this.pendingQueue.find((record) => record.id === id) || this.archiveQueue.find((record) => record.id === id),
+        { id, status: 'download_confirmed' }
+      ));
+    },
+    async markFilesAsArchived(recordIds) {
+      this.archivedIds.push(...recordIds);
+      this.pendingQueue = this.pendingQueue.map((record) => (
+        recordIds.includes(record.id) ? Object.assign({}, record, { status: 'archived', download_confirmed_at: null }) : record
+      ));
+      this.manualQueue = this.manualQueue.map((record) => (
+        recordIds.includes(record.id) ? Object.assign({}, record, { status: 'archived', download_confirmed_at: null }) : record
+      ));
+      this.archiveQueue = this.archiveQueue.map((record) => (
+        recordIds.includes(record.id) ? Object.assign({}, record, { status: 'archived', download_confirmed_at: null }) : record
+      ));
+      return recordIds.map((id) => Object.assign(
+        {},
+        this.pendingQueue.find((record) => record.id === id) ||
+          this.manualQueue.find((record) => record.id === id) ||
+          this.archiveQueue.find((record) => record.id === id),
+        { id, status: 'archived', download_confirmed_at: null }
+      ));
     },
     async markFilesAsSendFailed(recordIds) {
       this.sendFailedIds.push(...recordIds);
@@ -926,14 +1137,17 @@ function createMockDependencies(options) {
     async sendPhoto(payload) {
       failIfConfigured(payload.fileId);
       this.calls.push(Object.assign({ method: 'sendPhoto' }, payload));
+      return { message_id: 3000 + this.calls.length };
     },
     async sendVideo(payload) {
       failIfConfigured(payload.fileId);
       this.calls.push(Object.assign({ method: 'sendVideo' }, payload));
+      return { message_id: 3000 + this.calls.length };
     },
     async sendDocument(payload) {
       failIfConfigured(payload.fileId);
       this.calls.push(Object.assign({ method: 'sendDocument' }, payload));
+      return { message_id: 3000 + this.calls.length };
     }
   };
 

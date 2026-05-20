@@ -3,12 +3,17 @@
 const { processIncomingMessage } = require('./process-message');
 const { DEFAULT_SMALL_FILE_LIMIT_BYTES } = require('../domain/file-size');
 const {
+  buildArchiveConfirmedMessage,
+  buildArchiveFileNotFoundMessage,
+  buildArchiveReplyRequiredMessage,
+  buildArchiveSummaryMessage,
   buildClearQueueConfirmedMessage,
   buildClearQueuePrompt,
   buildProcessingResponse,
   buildQueueMessage,
   buildQueueSummaryMessage,
   buildStatsMessage,
+  buildShownArchiveFilesMessage,
   buildShownFilesMessage,
   createClearQueueConfirmationKeyboard,
   createShowNextFilesKeyboard,
@@ -19,6 +24,9 @@ const {
 const CALLBACK_SHOW_NEXT_FILES = 'show_next_files';
 const CALLBACK_SHOW_LARGEST_FILES = 'show_largest_files';
 const CALLBACK_SHOW_SMALLEST_FILES = 'show_smallest_files';
+const CALLBACK_SHOW_NEXT_ARCHIVE_FILES = 'show_next_archive_files';
+const CALLBACK_SHOW_LARGEST_ARCHIVE_FILES = 'show_largest_archive_files';
+const CALLBACK_SHOW_SMALLEST_ARCHIVE_FILES = 'show_smallest_archive_files';
 const CALLBACK_CONFIRM_CLEAR_QUEUE = 'confirm_clear_queue';
 const CALLBACK_CANCEL_CLEAR_QUEUE = 'cancel_clear_queue';
 const MANUAL_DOWNLOAD_BATCH_SIZE = 10;
@@ -226,6 +234,30 @@ function createTelegramUpdateHandler(dependencies) {
       };
     }
 
+    if (commandName === '/show_archive') {
+      const summary = await deps.fileRepository.getArchiveSummary();
+      const text = buildArchiveSummaryMessage(summary);
+
+      await deps.messageSender.sendMessage({
+        chatId: message.chat && message.chat.id,
+        text,
+        replyMarkup: summary.fileCount > 0 ? createArchiveKeyboard() : undefined
+      });
+
+      return {
+        accepted: true,
+        reason: 'show_archive_command',
+        files: [],
+        deleteMessageCalled: false,
+        sendMessageCalled: true,
+        responseText: text
+      };
+    }
+
+    if (commandName === '/archive') {
+      return handleArchiveCommand(message);
+    }
+
     if (commandName === '/stats') {
       const stats = await deps.fileRepository.getStats();
       const text = buildStatsMessage(stats);
@@ -329,6 +361,18 @@ function createTelegramUpdateHandler(dependencies) {
       return showManualDownloadBatch(callbackQuery, 'size_asc');
     }
 
+    if (callbackQuery.data === CALLBACK_SHOW_NEXT_ARCHIVE_FILES) {
+      return showArchiveBatch(callbackQuery, 'queue');
+    }
+
+    if (callbackQuery.data === CALLBACK_SHOW_LARGEST_ARCHIVE_FILES) {
+      return showArchiveBatch(callbackQuery, 'size_desc');
+    }
+
+    if (callbackQuery.data === CALLBACK_SHOW_SMALLEST_ARCHIVE_FILES) {
+      return showArchiveBatch(callbackQuery, 'size_asc');
+    }
+
     if (callbackQuery.data === CALLBACK_CONFIRM_CLEAR_QUEUE) {
       const updated = await deps.fileRepository.markActiveQueueAsDeletedByUser(now());
       await logFileEvents(updated, 'deleted_by_user', 'deleted_by_user');
@@ -377,22 +421,52 @@ function createTelegramUpdateHandler(dependencies) {
   }
 
   async function showManualDownloadBatch(callbackQuery, orderBy) {
+    return showFileBatch(callbackQuery, {
+      source: 'queue',
+      orderBy,
+      getFiles: (options) => deps.fileRepository.getPendingManualDownloadQueue(options),
+      getRemainingCount: getRemainingManualDownloadCount,
+      emptyText: 'В очереди нет файлов для ручного скачивания.',
+      emptyAfterShownText: 'Больше файлов в очереди нет.',
+      buildShownMessage: buildShownFilesMessage,
+      createKeyboard: createShowNextFilesKeyboard,
+      reasonEmpty: 'manual_download_queue_empty',
+      reasonShown: 'manual_download_batch_shown'
+    });
+  }
+
+  async function showArchiveBatch(callbackQuery, orderBy) {
+    return showFileBatch(callbackQuery, {
+      source: 'archive',
+      orderBy,
+      getFiles: (options) => deps.fileRepository.getArchiveQueue(options),
+      getRemainingCount: getRemainingArchiveCount,
+      emptyText: 'В архиве нет файлов.',
+      emptyAfterShownText: 'Больше файлов в архиве нет.',
+      buildShownMessage: buildShownArchiveFilesMessage,
+      createKeyboard: createArchiveKeyboard,
+      reasonEmpty: 'archive_empty',
+      reasonShown: 'archive_batch_shown'
+    });
+  }
+
+  async function showFileBatch(callbackQuery, options) {
     const chatId = callbackQuery.message && callbackQuery.message.chat && callbackQuery.message.chat.id;
     const timestamp = now();
-    const shownFiles = await deps.fileRepository.getShownToUserFiles();
+    const shownFiles = options.source === 'queue' ? await deps.fileRepository.getShownToUserFiles() : [];
 
     if (shownFiles.length > 0) {
       const confirmed = await deps.fileRepository.markFilesAsDownloadConfirmed(shownFiles.map((file) => file.id), timestamp);
       await logFileEvents(confirmed, 'download_confirmed', 'download_confirmed');
     }
 
-    const queue = await deps.fileRepository.getPendingManualDownloadQueue({
+    const queue = await options.getFiles({
       limit: MANUAL_DOWNLOAD_BATCH_SIZE,
-      orderBy
+      orderBy: options.orderBy
     });
 
     if (queue.length === 0) {
-      const text = shownFiles.length > 0 ? 'Больше файлов в очереди нет.' : 'В очереди нет файлов для ручного скачивания.';
+      const text = shownFiles.length > 0 ? options.emptyAfterShownText : options.emptyText;
 
       await deps.messageSender.sendMessage({
         chatId,
@@ -401,7 +475,7 @@ function createTelegramUpdateHandler(dependencies) {
 
       return {
         accepted: true,
-        reason: 'manual_download_queue_empty',
+        reason: options.reasonEmpty,
         files: [],
         confirmedCount: shownFiles.length,
         deleteMessageCalled: false,
@@ -415,7 +489,8 @@ function createTelegramUpdateHandler(dependencies) {
 
     for (const file of queue) {
       try {
-        await sendQueuedFile(chatId, file);
+        const sentMessage = await sendQueuedFile(chatId, file);
+        await recordSentFile(file, sentMessage, chatId, options.source);
         sentFiles.push(file);
       } catch (error) {
         failedFiles.push({ file, error });
@@ -429,21 +504,84 @@ function createTelegramUpdateHandler(dependencies) {
       await logFileEvents(confirmed, 'download_confirmed', 'download_confirmed');
     }
 
-    const remainingCount = await getRemainingManualDownloadCount();
-    const text = buildShownFilesMessage(sentFiles.length, remainingCount);
+    const remainingCount = await options.getRemainingCount();
+    const text = options.buildShownMessage(sentFiles.length, remainingCount);
 
     await deps.messageSender.sendMessage({
       chatId,
       text,
-      replyMarkup: remainingCount > 0 ? createShowNextFilesKeyboard() : undefined
+      replyMarkup: remainingCount > 0 ? options.createKeyboard() : undefined
     });
 
     return {
       accepted: true,
-      reason: 'manual_download_batch_shown',
+      reason: options.reasonShown,
       files: sentFiles.map(toResultFile),
       failedFiles: failedFiles.map((failed) => toResultFile(failed.file, 'send_failed')),
       confirmedCount: shownFiles.length,
+      deleteMessageCalled: false,
+      sendMessageCalled: true,
+      responseText: text
+    };
+  }
+
+  async function handleArchiveCommand(message) {
+    const replyToMessageId = message.reply_to_message && message.reply_to_message.message_id;
+
+    if (!Number.isFinite(replyToMessageId)) {
+      const text = buildArchiveReplyRequiredMessage();
+
+      await deps.messageSender.sendMessage({
+        chatId: message.chat && message.chat.id,
+        text
+      });
+
+      return {
+        accepted: true,
+        reason: 'archive_reply_required',
+        files: [],
+        deleteMessageCalled: false,
+        sendMessageCalled: true,
+        responseText: text
+      };
+    }
+
+    const file = await deps.fileRepository.findFileBySentMessage(
+      message.chat && message.chat.id,
+      replyToMessageId
+    );
+
+    if (!file) {
+      const text = buildArchiveFileNotFoundMessage();
+
+      await deps.messageSender.sendMessage({
+        chatId: message.chat && message.chat.id,
+        text
+      });
+
+      return {
+        accepted: true,
+        reason: 'archive_file_not_found',
+        files: [],
+        deleteMessageCalled: false,
+        sendMessageCalled: true,
+        responseText: text
+      };
+    }
+
+    const archived = await deps.fileRepository.markFilesAsArchived([file.id], now());
+    await logFileEvents(archived.length > 0 ? archived : [file], 'archived', 'archived');
+    const text = buildArchiveConfirmedMessage();
+
+    await deps.messageSender.sendMessage({
+      chatId: message.chat && message.chat.id,
+      text
+    });
+
+    return {
+      accepted: true,
+      reason: 'archive_command',
+      files: archived.map(toResultFile),
       deleteMessageCalled: false,
       sendMessageCalled: true,
       responseText: text
@@ -460,6 +598,20 @@ function createTelegramUpdateHandler(dependencies) {
     }
 
     return deps.fileSender.sendDocument({ chatId, fileId: file.file_id });
+  }
+
+  async function recordSentFile(file, sentMessage, chatId, source) {
+    if (!deps.fileRepository.createSentFile || !sentMessage || !Number.isFinite(sentMessage.message_id)) {
+      return null;
+    }
+
+    return deps.fileRepository.createSentFile({
+      file_record_id: file.id,
+      chat_id: chatId,
+      sent_message_id: sentMessage.message_id,
+      source,
+      created_at: now()
+    });
   }
 
   function countPendingFiles(files) {
@@ -486,6 +638,29 @@ function createTelegramUpdateHandler(dependencies) {
     });
 
     return countPendingFiles(remainingQueue);
+  }
+
+  async function getRemainingArchiveCount() {
+    if (typeof deps.fileRepository.getArchiveSummary === 'function') {
+      const summary = await deps.fileRepository.getArchiveSummary();
+      return summary && Number.isFinite(summary.fileCount) ? summary.fileCount : 0;
+    }
+
+    const archiveQueue = await deps.fileRepository.getArchiveQueue({
+      limit: 100
+    });
+
+    return archiveQueue.length;
+  }
+
+  function createArchiveKeyboard() {
+    return createShowNextFilesKeyboard({
+      callbackData: {
+        showNext: CALLBACK_SHOW_NEXT_ARCHIVE_FILES,
+        showLargest: CALLBACK_SHOW_LARGEST_ARCHIVE_FILES,
+        showSmallest: CALLBACK_SHOW_SMALLEST_ARCHIVE_FILES
+      }
+    });
   }
 
   function toResultFile(file, overrideStatus) {
@@ -806,6 +981,9 @@ module.exports = {
   CALLBACK_SHOW_NEXT_FILES,
   CALLBACK_SHOW_LARGEST_FILES,
   CALLBACK_SHOW_SMALLEST_FILES,
+  CALLBACK_SHOW_NEXT_ARCHIVE_FILES,
+  CALLBACK_SHOW_LARGEST_ARCHIVE_FILES,
+  CALLBACK_SHOW_SMALLEST_ARCHIVE_FILES,
   CALLBACK_CONFIRM_CLEAR_QUEUE,
   CALLBACK_CANCEL_CLEAR_QUEUE
 };

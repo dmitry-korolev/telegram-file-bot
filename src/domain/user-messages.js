@@ -15,11 +15,16 @@ function getCommandName(message) {
 function createShowNextFilesKeyboard(options) {
   const normalizedOptions = options || {};
   const includeSizeButtons = normalizedOptions.includeSizeButtons !== false;
+  const callbackData = Object.assign({
+    showNext: 'show_next_files',
+    showLargest: 'show_largest_files',
+    showSmallest: 'show_smallest_files'
+  }, normalizedOptions.callbackData || {});
   const keyboard = [
     [
       {
         text: 'Показать следующие вложения',
-        callback_data: 'show_next_files'
+        callback_data: callbackData.showNext
       }
     ]
   ];
@@ -28,11 +33,11 @@ function createShowNextFilesKeyboard(options) {
     keyboard.push([
       {
         text: '10 самых больших',
-        callback_data: 'show_largest_files'
+        callback_data: callbackData.showLargest
       },
       {
         text: '10 самых маленьких',
-        callback_data: 'show_smallest_files'
+        callback_data: callbackData.showSmallest
       }
     ]);
   }
@@ -93,6 +98,20 @@ function buildQueueSummaryMessage(summary) {
   return `В очереди файлов: ${fileCount}. Суммарный объем: ${formatFileSize(normalizedSummary.totalKnownSize || 0)}${unknownSizeText}.`;
 }
 
+function buildArchiveSummaryMessage(summary) {
+  const normalizedSummary = summary || {};
+  const fileCount = normalizedSummary.fileCount || 0;
+
+  if (fileCount === 0) {
+    return 'В архиве нет файлов.';
+  }
+
+  const unknownSizeCount = normalizedSummary.unknownSizeFiles || 0;
+  const unknownSizeText = unknownSizeCount > 0 ? `, файлов с неизвестным размером: ${unknownSizeCount}` : '';
+
+  return `В архиве файлов: ${fileCount}. Суммарный объем: ${formatFileSize(normalizedSummary.totalKnownSize || 0)}${unknownSizeText}.`;
+}
+
 function buildStatsMessage(stats) {
   const normalizedStats = stats || {};
 
@@ -131,6 +150,30 @@ function buildShownFilesMessage(shownCount, remainingCount) {
   }
 
   return `Показано вложений: ${shownCount}. Они отмечены как скачанные. Осталось в очереди: 0.`;
+}
+
+function buildShownArchiveFilesMessage(shownCount, remainingCount) {
+  if (shownCount === 0) {
+    return remainingCount > 0 ? 'Не удалось показать файлы из архива.' : 'Больше файлов в архиве нет.';
+  }
+
+  if (remainingCount > 0) {
+    return `Показано вложений из архива: ${shownCount}. Они отмечены как скачанные. Осталось в архиве: ${remainingCount}.`;
+  }
+
+  return `Показано вложений из архива: ${shownCount}. Они отмечены как скачанные. Осталось в архиве: 0.`;
+}
+
+function buildArchiveReplyRequiredMessage() {
+  return 'Отправьте /archive в ответ на медиа, которое бот прислал из очереди или архива.';
+}
+
+function buildArchiveFileNotFoundMessage() {
+  return 'Не удалось найти файл для этого сообщения.';
+}
+
+function buildArchiveConfirmedMessage() {
+  return 'Файл перемещен в архив.';
 }
 
 function buildClearQueuePrompt() {
@@ -237,8 +280,13 @@ module.exports = {
   createClearQueueConfirmationKeyboard,
   buildQueueMessage,
   buildQueueSummaryMessage,
+  buildArchiveSummaryMessage,
   buildStatsMessage,
   buildShownFilesMessage,
+  buildShownArchiveFilesMessage,
+  buildArchiveReplyRequiredMessage,
+  buildArchiveFileNotFoundMessage,
+  buildArchiveConfirmedMessage,
   buildClearQueuePrompt,
   buildClearQueueConfirmedMessage,
   buildProcessingResponse,

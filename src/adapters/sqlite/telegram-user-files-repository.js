@@ -16,14 +16,19 @@ function createTelegramUserFilesRepository(sqliteClient) {
     getManualDownloadQueue,
     getManualDownloadQueueSummary,
     getPendingManualDownloadSummary,
+    getArchiveQueue,
+    getArchiveSummary,
     getShownToUserFiles,
     getStats,
     getStatsImageData,
     getNextQueuePosition,
+    createSentFile,
+    findFileBySentMessage,
     createFileEvent,
     incrementMetaCounter,
     markFilesAsShownToUser,
     markFilesAsDownloadConfirmed,
+    markFilesAsArchived,
     markFilesAsSendFailed,
     markFilesDeleteMessageFailed,
     markActiveQueueAsDeletedByUser
@@ -87,6 +92,21 @@ function createTelegramUserFilesRepository(sqliteClient) {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS telegram_sent_files (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        file_record_id INTEGER NOT NULL,
+        chat_id INTEGER NOT NULL,
+        sent_message_id INTEGER NOT NULL,
+        source TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_telegram_sent_files_message
+      ON telegram_sent_files (chat_id, sent_message_id);
+
+      CREATE INDEX IF NOT EXISTS idx_telegram_sent_files_record_id
+      ON telegram_sent_files (file_record_id);
 
       INSERT OR IGNORE INTO telegram_bot_meta (key, value, created_at, updated_at)
       SELECT
@@ -247,6 +267,60 @@ function createTelegramUserFilesRepository(sqliteClient) {
     return normalizeQueueSummaryRow(rows[0] || {});
   }
 
+  function getArchiveQueue(options) {
+    const normalizedOptions = options || {};
+    const limit = normalizePositiveInteger(normalizedOptions.limit, 10);
+    const orderBy = normalizedOptions.orderBy || 'queue';
+
+    if (orderBy === 'size_desc' || orderBy === 'size_asc') {
+      const direction = orderBy === 'size_desc' ? 'DESC' : 'ASC';
+
+      return sqliteClient.query(`
+        SELECT *
+        FROM telegram_user_files
+        WHERE status = 'archived'
+          AND file_size IS NOT NULL
+        ORDER BY file_size ${direction}, queue_position ASC, received_at ASC, id ASC
+        LIMIT ${limit};
+      `);
+    }
+
+    const photoAndVideoRows = sqliteClient.query(`
+      SELECT *
+      FROM telegram_user_files
+      WHERE status = 'archived'
+        AND file_kind IN ('photo', 'video')
+      ORDER BY queue_position ASC, received_at ASC, id ASC
+      LIMIT ${limit};
+    `);
+
+    if (photoAndVideoRows.length > 0) {
+      return photoAndVideoRows;
+    }
+
+    return sqliteClient.query(`
+      SELECT *
+      FROM telegram_user_files
+      WHERE status = 'archived'
+        AND file_kind = 'document'
+      ORDER BY queue_position ASC, received_at ASC, id ASC
+      LIMIT ${limit};
+    `);
+  }
+
+  function getArchiveSummary() {
+    const rows = sqliteClient.query(`
+      SELECT
+        COUNT(*) AS file_count,
+        COALESCE(SUM(CASE WHEN file_size IS NOT NULL THEN file_size ELSE 0 END), 0) AS total_known_size,
+        SUM(CASE WHEN file_size IS NULL THEN 1 ELSE 0 END) AS unknown_size_files
+      FROM telegram_user_files
+      WHERE status = 'archived';
+    `);
+
+    return normalizeQueueSummaryRow(rows[0] || {});
+  }
+
   function getShownToUserFiles() {
     return sqliteClient.query(`
       SELECT *
@@ -366,6 +440,43 @@ function createTelegramUserFilesRepository(sqliteClient) {
     return insertedRows[0] || null;
   }
 
+  function createSentFile(sentFile) {
+    const normalizedSentFile = normalizeSentFile(sentFile);
+    const insertedRows = sqliteClient.query(`
+      INSERT INTO telegram_sent_files (
+        file_record_id,
+        chat_id,
+        sent_message_id,
+        source,
+        created_at
+      ) VALUES (
+        ${toSqlValue(normalizedSentFile.file_record_id)},
+        ${toSqlValue(normalizedSentFile.chat_id)},
+        ${toSqlValue(normalizedSentFile.sent_message_id)},
+        ${toSqlValue(normalizedSentFile.source)},
+        ${toSqlValue(normalizedSentFile.created_at)}
+      )
+      RETURNING *;
+    `);
+
+    return insertedRows[0] || null;
+  }
+
+  function findFileBySentMessage(chatId, sentMessageId) {
+    const rows = sqliteClient.query(`
+      SELECT telegram_user_files.*
+      FROM telegram_sent_files
+      JOIN telegram_user_files
+        ON telegram_user_files.id = telegram_sent_files.file_record_id
+      WHERE telegram_sent_files.chat_id = ${toSqlValue(chatId)}
+        AND telegram_sent_files.sent_message_id = ${toSqlValue(sentMessageId)}
+      ORDER BY telegram_sent_files.created_at DESC, telegram_sent_files.id DESC
+      LIMIT 1;
+    `);
+
+    return rows[0] || null;
+  }
+
   function incrementMetaCounter(key, incrementBy, updatedAt) {
     const normalizedKey = requiredString(key, 'key');
     const increment = Number.isInteger(incrementBy) ? incrementBy : 1;
@@ -395,11 +506,33 @@ function createTelegramUserFilesRepository(sqliteClient) {
   function markFilesAsDownloadConfirmed(recordIds, confirmedAt) {
     return updateStatuses({
       recordIds,
-      currentStatus: ['pending_manual_download', 'shown_to_user'],
+      currentStatus: ['pending_manual_download', 'shown_to_user', 'archived'],
       nextStatus: 'download_confirmed',
       timestampColumn: 'download_confirmed_at',
       timestampValue: confirmedAt || new Date().toISOString()
     });
+  }
+
+  function markFilesAsArchived(recordIds, archivedAt) {
+    const recordIdsList = Array.isArray(recordIds) ? recordIds.filter(isPositiveInteger) : [];
+
+    if (recordIdsList.length === 0) {
+      return [];
+    }
+
+    const timestamp = archivedAt || new Date().toISOString();
+    const idsSql = recordIdsList.map(toSqlValue).join(', ');
+
+    return sqliteClient.query(`
+      UPDATE telegram_user_files
+      SET status = 'archived',
+          shown_at = NULL,
+          download_confirmed_at = NULL,
+          updated_at = ${toSqlValue(timestamp)}
+      WHERE id IN (${idsSql})
+        AND status IN ('pending_manual_download', 'pending_size_unknown', 'shown_to_user', 'download_confirmed', 'archived')
+      RETURNING *;
+    `);
   }
 
   function markFilesAsSendFailed(recordIds, error, failedAt) {
@@ -501,6 +634,24 @@ function normalizeFileEvent(event) {
     error_code: optionalValue(event.error_code === undefined ? event.errorCode : event.error_code),
     error_message: optionalValue(event.error_message === undefined ? event.errorMessage : event.error_message),
     created_at: event.created_at || event.createdAt || new Date().toISOString()
+  };
+}
+
+function normalizeSentFile(sentFile) {
+  if (!sentFile || typeof sentFile !== 'object') {
+    throw new Error('sentFile is required');
+  }
+
+  const fileRecordId = sentFile.file_record_id === undefined ? sentFile.fileRecordId : sentFile.file_record_id;
+  const chatId = sentFile.chat_id === undefined ? sentFile.chatId : sentFile.chat_id;
+  const sentMessageId = sentFile.sent_message_id === undefined ? sentFile.sentMessageId : sentFile.sent_message_id;
+
+  return {
+    file_record_id: requiredNumber(fileRecordId, 'file_record_id'),
+    chat_id: requiredNumber(chatId, 'chat_id'),
+    sent_message_id: requiredNumber(sentMessageId, 'sent_message_id'),
+    source: requiredString(sentFile.source, 'source'),
+    created_at: sentFile.created_at || sentFile.createdAt || new Date().toISOString()
   };
 }
 

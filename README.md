@@ -43,6 +43,8 @@ Small files up to `SMALL_FILE_LIMIT_BYTES` are downloaded automatically to `DOWN
 Available commands:
 
 - `/queue` — show the shared queue summary: file count and total known size.
+- `/show_archive` — show the archive summary and buttons for archived files.
+- `/archive` — when sent as a reply to media previously sent by the bot, move that file to the archive.
 - `/stats` — show aggregate bot statistics: total files, known total size, active queue size, downloaded files, confirmed manual downloads, duplicates, errors, and attachment types.
 - `/stats_image` — send aggregate bot statistics as a PNG image with charts for file sizes, attachment types, and processing statuses.
 - `/clear_queue` — ask for confirmation before clearing the shared queue. Confirmed cleanup marks active queue records as `deleted_by_user`.
@@ -54,6 +56,8 @@ Available buttons:
 - `10 самых маленьких` — sends up to 10 queued files with the smallest known size.
 - `Очистить очередь` — confirms `/clear_queue`.
 - `Отмена` — cancels queue cleanup.
+
+The same next/largest/smallest buttons are used for `/show_archive`, but they operate on archived files. Files shown from the archive are removed from the archive and marked as `download_confirmed`.
 
 Manual download flow:
 

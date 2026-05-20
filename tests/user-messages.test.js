@@ -3,6 +3,11 @@
 const assert = require('assert');
 
 const {
+  buildArchiveConfirmedMessage,
+  buildArchiveFileNotFoundMessage,
+  buildArchiveReplyRequiredMessage,
+  buildArchiveSummaryMessage,
+  buildShownArchiveFilesMessage,
   buildShownFilesMessage,
   buildQueueMessage,
   buildQueueSummaryMessage,
@@ -16,10 +21,13 @@ function runTests() {
   testCommandMessageDetection();
   testQueueMessageUsesSummaryOnly();
   testQueueSummaryMessageUsesAggregate();
+  testArchiveSummaryMessageUsesAggregate();
   testStatsMessage();
   testShowNextKeyboardIncludesQueueAndSizeActions();
+  testShowNextKeyboardCanUseCustomCallbacks();
   testShowNextKeyboardCanHideSizeActions();
   testShownFilesMessageMarksFilesDownloaded();
+  testArchiveMessages();
   testSingleDownloadedFileMessage();
   testMultipleFilesSummary();
 }
@@ -85,6 +93,20 @@ function testShowNextKeyboardCanHideSizeActions() {
   );
 }
 
+function testShowNextKeyboardCanUseCustomCallbacks() {
+  const keyboard = createShowNextFilesKeyboard({
+    callbackData: {
+      showNext: 'archive_next',
+      showLargest: 'archive_largest',
+      showSmallest: 'archive_smallest'
+    }
+  }).inline_keyboard;
+
+  assert.strictEqual(keyboard[0][0].callback_data, 'archive_next');
+  assert.strictEqual(keyboard[1][0].callback_data, 'archive_largest');
+  assert.strictEqual(keyboard[1][1].callback_data, 'archive_smallest');
+}
+
 function testShownFilesMessageMarksFilesDownloaded() {
   assert.strictEqual(
     buildShownFilesMessage(10, 2),
@@ -94,6 +116,23 @@ function testShownFilesMessageMarksFilesDownloaded() {
     buildShownFilesMessage(2, 0),
     'Показано вложений: 2. Они отмечены как скачанные. Осталось в очереди: 0.'
   );
+}
+
+function testArchiveMessages() {
+  assert.strictEqual(
+    buildShownArchiveFilesMessage(2, 0),
+    'Показано вложений из архива: 2. Они отмечены как скачанные. Осталось в архиве: 0.'
+  );
+  assert.strictEqual(
+    buildShownArchiveFilesMessage(0, 0),
+    'Больше файлов в архиве нет.'
+  );
+  assert.strictEqual(
+    buildArchiveReplyRequiredMessage(),
+    'Отправьте /archive в ответ на медиа, которое бот прислал из очереди или архива.'
+  );
+  assert.strictEqual(buildArchiveFileNotFoundMessage(), 'Не удалось найти файл для этого сообщения.');
+  assert.strictEqual(buildArchiveConfirmedMessage(), 'Файл перемещен в архив.');
 }
 
 function testQueueMessageUsesSummaryOnly() {
@@ -125,6 +164,18 @@ function testQueueSummaryMessageUsesAggregate() {
   });
 
   assert.strictEqual(response, 'В очереди файлов: 703. Суммарный объем: 120795.4 МБ.');
+}
+
+function testArchiveSummaryMessageUsesAggregate() {
+  assert.strictEqual(
+    buildArchiveSummaryMessage({
+      fileCount: 2,
+      totalKnownSize: 30 * 1024 * 1024,
+      unknownSizeFiles: 0
+    }),
+    'В архиве файлов: 2. Суммарный объем: 30.0 МБ.'
+  );
+  assert.strictEqual(buildArchiveSummaryMessage({ fileCount: 0 }), 'В архиве нет файлов.');
 }
 
 function testSingleDownloadedFileMessage() {

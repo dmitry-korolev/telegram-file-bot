@@ -19,6 +19,7 @@ function runTests() {
   testManualDownloadQueueIncludesActiveStatuses();
   testManualDownloadQueueSummaryIsNotLimited();
   testPendingManualDownloadSummaryExcludesShownRecords();
+  testArchiveQueueAndSummaryUseArchivedStatus();
   testGetShownToUserFilesReturnsShownRecords();
   testGetStatsAggregatesFiles();
   testGetStatsImageDataAggregatesBuckets();
@@ -27,9 +28,11 @@ function runTests() {
   testGetNextQueuePositionUsesExistingMaximum();
   testMarkFilesAsShownToUserUpdatesPendingRecords();
   testMarkFilesAsDownloadConfirmedUpdatesShownRecords();
+  testMarkFilesAsArchivedResetsConfirmedState();
   testMarkFilesAsSendFailedStoresError();
   testMarkFilesDeleteMessageFailedKeepsStatus();
   testMarkActiveQueueAsDeletedByUserKeepsHistory();
+  testSentFileMappingFindsFileByBotMessage();
   testCreateFileEventPersistsAuditRecord();
 }
 
@@ -334,6 +337,44 @@ function testPendingManualDownloadSummaryExcludesShownRecords() {
   });
 }
 
+function testArchiveQueueAndSummaryUseArchivedStatus() {
+  withRepository((repository) => {
+    repository.create(createRecord({
+      file_id: 'archived-photo',
+      file_unique_id: 'archived-photo-unique',
+      file_kind: 'photo',
+      status: 'archived',
+      queue_position: 1,
+      file_size: 30 * 1024 * 1024
+    }));
+    repository.create(createRecord({
+      file_id: 'archived-doc',
+      file_unique_id: 'archived-doc-unique',
+      file_kind: 'document',
+      status: 'archived',
+      queue_position: 2,
+      file_size: 10 * 1024 * 1024
+    }));
+    repository.create(createRecord({
+      file_id: 'pending-video',
+      file_unique_id: 'pending-video-unique',
+      file_kind: 'video',
+      status: 'pending_manual_download',
+      queue_position: 3,
+      file_size: 50 * 1024 * 1024
+    }));
+
+    const next = repository.getArchiveQueue({ limit: 10 });
+    const largest = repository.getArchiveQueue({ limit: 10, orderBy: 'size_desc' });
+    const summary = repository.getArchiveSummary();
+
+    assert.deepStrictEqual(next.map((item) => item.file_unique_id), ['archived-photo-unique']);
+    assert.deepStrictEqual(largest.map((item) => item.file_unique_id), ['archived-photo-unique', 'archived-doc-unique']);
+    assert.strictEqual(summary.fileCount, 2);
+    assert.strictEqual(summary.totalKnownSize, 40 * 1024 * 1024);
+  });
+}
+
 function testGetShownToUserFilesReturnsShownRecords() {
   withRepository((repository) => {
     repository.create(createRecord({
@@ -593,6 +634,36 @@ function testMarkFilesAsDownloadConfirmedUpdatesShownRecords() {
   });
 }
 
+function testMarkFilesAsArchivedResetsConfirmedState() {
+  withRepository((repository) => {
+    const first = repository.create(createRecord({
+      file_id: 'confirmed-1',
+      file_unique_id: 'confirmed-unique-1',
+      file_kind: 'photo',
+      queue_position: 1,
+      status: 'download_confirmed',
+      download_confirmed_at: '2026-05-16T10:20:00.000Z'
+    }));
+    const second = repository.create(createRecord({
+      file_id: 'pending-1',
+      file_unique_id: 'pending-unique-1',
+      file_kind: 'video',
+      queue_position: 2,
+      status: 'pending_manual_download'
+    }));
+
+    const updated = repository.markFilesAsArchived([first.id, second.id], '2026-05-16T10:25:00.000Z');
+    const foundFirst = repository.findByFileUniqueId('confirmed-unique-1');
+    const foundSecond = repository.findByFileUniqueId('pending-unique-1');
+
+    assert.strictEqual(updated.length, 2);
+    assert.deepStrictEqual(updated.map((item) => item.status), ['archived', 'archived']);
+    assert.strictEqual(foundFirst.status, 'archived');
+    assert.strictEqual(foundFirst.download_confirmed_at, null);
+    assert.strictEqual(foundSecond.status, 'archived');
+  });
+}
+
 function testMarkFilesAsSendFailedStoresError() {
   withRepository((repository) => {
     const first = repository.create(createRecord({
@@ -661,6 +732,32 @@ function testMarkActiveQueueAsDeletedByUserKeepsHistory() {
       ['deleted_by_user', 'deleted_by_user']
     );
     assert.strictEqual(repository.findByFileUniqueId('downloaded-unique-1').status, 'downloaded');
+  });
+}
+
+function testSentFileMappingFindsFileByBotMessage() {
+  withRepository((repository) => {
+    const first = repository.create(createRecord({
+      file_id: 'photo-1',
+      file_unique_id: 'photo-unique-1',
+      file_kind: 'photo',
+      queue_position: 1,
+      status: 'download_confirmed'
+    }));
+
+    const sentFile = repository.createSentFile({
+      file_record_id: first.id,
+      chat_id: 5001,
+      sent_message_id: 7001,
+      source: 'queue',
+      created_at: '2026-05-16T10:50:00.000Z'
+    });
+    const found = repository.findFileBySentMessage(5001, 7001);
+    const missing = repository.findFileBySentMessage(5001, 9999);
+
+    assert.ok(sentFile.id > 0);
+    assert.strictEqual(found.file_unique_id, 'photo-unique-1');
+    assert.strictEqual(missing, null);
   });
 }
 
