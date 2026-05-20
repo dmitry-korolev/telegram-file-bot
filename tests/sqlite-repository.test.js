@@ -29,6 +29,7 @@ function runTests() {
   testMarkFilesAsShownToUserUpdatesPendingRecords();
   testMarkFilesAsDownloadConfirmedUpdatesShownRecords();
   testMarkFilesAsArchivedResetsConfirmedState();
+  testMarkFilesAsQueuedRestoresPendingState();
   testMarkFilesAsSendFailedStoresError();
   testMarkFilesDeleteMessageFailedKeepsStatus();
   testMarkActiveQueueAsDeletedByUserKeepsHistory();
@@ -661,6 +662,39 @@ function testMarkFilesAsArchivedResetsConfirmedState() {
     assert.strictEqual(foundFirst.status, 'archived');
     assert.strictEqual(foundFirst.download_confirmed_at, null);
     assert.strictEqual(foundSecond.status, 'archived');
+  });
+}
+
+function testMarkFilesAsQueuedRestoresPendingState() {
+  withRepository((repository) => {
+    const known = repository.create(createRecord({
+      file_id: 'confirmed-known',
+      file_unique_id: 'confirmed-known-unique',
+      file_kind: 'photo',
+      file_size: 25 * 1024 * 1024,
+      queue_position: 1,
+      status: 'download_confirmed',
+      download_confirmed_at: '2026-05-16T10:20:00.000Z'
+    }));
+    const unknown = repository.create(createRecord({
+      file_id: 'archived-unknown',
+      file_unique_id: 'archived-unknown-unique',
+      file_kind: 'document',
+      file_size: null,
+      queue_position: 2,
+      status: 'archived',
+      download_confirmed_at: '2026-05-16T10:25:00.000Z'
+    }));
+
+    const updated = repository.markFilesAsQueued([known.id, unknown.id], '2026-05-16T10:30:00.000Z');
+    const foundKnown = repository.findByFileUniqueId('confirmed-known-unique');
+    const foundUnknown = repository.findByFileUniqueId('archived-unknown-unique');
+
+    assert.deepStrictEqual(updated.map((item) => item.status), ['pending_manual_download', 'pending_size_unknown']);
+    assert.strictEqual(foundKnown.status, 'pending_manual_download');
+    assert.strictEqual(foundKnown.download_confirmed_at, null);
+    assert.strictEqual(foundUnknown.status, 'pending_size_unknown');
+    assert.strictEqual(foundUnknown.download_confirmed_at, null);
   });
 }
 

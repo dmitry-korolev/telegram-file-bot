@@ -29,6 +29,7 @@ function createTelegramUserFilesRepository(sqliteClient) {
     markFilesAsShownToUser,
     markFilesAsDownloadConfirmed,
     markFilesAsArchived,
+    markFilesAsQueued,
     markFilesAsSendFailed,
     markFilesDeleteMessageFailed,
     markActiveQueueAsDeletedByUser
@@ -526,6 +527,31 @@ function createTelegramUserFilesRepository(sqliteClient) {
     return sqliteClient.query(`
       UPDATE telegram_user_files
       SET status = 'archived',
+          shown_at = NULL,
+          download_confirmed_at = NULL,
+          updated_at = ${toSqlValue(timestamp)}
+      WHERE id IN (${idsSql})
+        AND status IN ('pending_manual_download', 'pending_size_unknown', 'shown_to_user', 'download_confirmed', 'archived')
+      RETURNING *;
+    `);
+  }
+
+  function markFilesAsQueued(recordIds, queuedAt) {
+    const recordIdsList = Array.isArray(recordIds) ? recordIds.filter(isPositiveInteger) : [];
+
+    if (recordIdsList.length === 0) {
+      return [];
+    }
+
+    const timestamp = queuedAt || new Date().toISOString();
+    const idsSql = recordIdsList.map(toSqlValue).join(', ');
+
+    return sqliteClient.query(`
+      UPDATE telegram_user_files
+      SET status = CASE
+            WHEN file_size IS NULL THEN 'pending_size_unknown'
+            ELSE 'pending_manual_download'
+          END,
           shown_at = NULL,
           download_confirmed_at = NULL,
           updated_at = ${toSqlValue(timestamp)}

@@ -42,7 +42,8 @@ Small files up to `SMALL_FILE_LIMIT_BYTES` are downloaded automatically to `DOWN
 
 Available commands:
 
-- `/queue` — show the shared queue summary: file count and total known size.
+- `/show_queue` — show the shared queue summary: file count and total known size.
+- `/queue` — when sent as a reply to media previously sent by the bot, return that file to the queue as not downloaded.
 - `/show_archive` — show the archive summary and buttons for archived files.
 - `/archive` — when sent as a reply to media previously sent by the bot, move that file to the archive.
 - `/stats` — show aggregate bot statistics: total files, known total size, active queue size, downloaded files, confirmed manual downloads, duplicates, errors, and attachment types.
@@ -62,7 +63,7 @@ The same next/largest/smallest buttons are used for `/show_archive`, but they op
 Manual download flow:
 
 1. Send large `photo`, `video`, or `document` files to the bot.
-2. Use `/queue` to inspect the queue.
+2. Use `/show_queue` to inspect the queue.
 3. Press `Показать следующие вложения`.
 4. Download the shown files in Telegram.
 5. If the queue still has files, press `Показать следующие вложения` again to receive the next batch.

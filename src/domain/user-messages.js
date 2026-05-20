@@ -176,6 +176,18 @@ function buildArchiveConfirmedMessage() {
   return 'Файл перемещен в архив.';
 }
 
+function buildQueueReplyRequiredMessage() {
+  return 'Отправьте /queue в ответ на медиа, которое бот прислал из очереди или архива.';
+}
+
+function buildQueueFileNotFoundMessage() {
+  return 'Не удалось найти файл для этого сообщения.';
+}
+
+function buildQueueReturnConfirmedMessage() {
+  return 'Файл возвращен в очередь.';
+}
+
 function buildClearQueuePrompt() {
   return 'Очистить очередь больших файлов? Это действие пометит текущие записи очереди как удаленные пользователем.';
 }
@@ -287,6 +299,9 @@ module.exports = {
   buildArchiveReplyRequiredMessage,
   buildArchiveFileNotFoundMessage,
   buildArchiveConfirmedMessage,
+  buildQueueReplyRequiredMessage,
+  buildQueueFileNotFoundMessage,
+  buildQueueReturnConfirmedMessage,
   buildClearQueuePrompt,
   buildClearQueueConfirmedMessage,
   buildProcessingResponse,

@@ -10,6 +10,9 @@ const {
   buildShownArchiveFilesMessage,
   buildShownFilesMessage,
   buildQueueMessage,
+  buildQueueFileNotFoundMessage,
+  buildQueueReplyRequiredMessage,
+  buildQueueReturnConfirmedMessage,
   buildQueueSummaryMessage,
   buildProcessingResponse,
   buildStatsMessage,
@@ -28,6 +31,7 @@ function runTests() {
   testShowNextKeyboardCanHideSizeActions();
   testShownFilesMessageMarksFilesDownloaded();
   testArchiveMessages();
+  testQueueReturnMessages();
   testSingleDownloadedFileMessage();
   testMultipleFilesSummary();
 }
@@ -133,6 +137,15 @@ function testArchiveMessages() {
   );
   assert.strictEqual(buildArchiveFileNotFoundMessage(), 'Не удалось найти файл для этого сообщения.');
   assert.strictEqual(buildArchiveConfirmedMessage(), 'Файл перемещен в архив.');
+}
+
+function testQueueReturnMessages() {
+  assert.strictEqual(
+    buildQueueReplyRequiredMessage(),
+    'Отправьте /queue в ответ на медиа, которое бот прислал из очереди или архива.'
+  );
+  assert.strictEqual(buildQueueFileNotFoundMessage(), 'Не удалось найти файл для этого сообщения.');
+  assert.strictEqual(buildQueueReturnConfirmedMessage(), 'Файл возвращен в очередь.');
 }
 
 function testQueueMessageUsesSummaryOnly() {

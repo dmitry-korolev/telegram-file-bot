@@ -10,7 +10,10 @@ const {
   buildClearQueueConfirmedMessage,
   buildClearQueuePrompt,
   buildProcessingResponse,
+  buildQueueFileNotFoundMessage,
   buildQueueMessage,
+  buildQueueReplyRequiredMessage,
+  buildQueueReturnConfirmedMessage,
   buildQueueSummaryMessage,
   buildStatsMessage,
   buildShownArchiveFilesMessage,
@@ -213,7 +216,7 @@ function createTelegramUpdateHandler(dependencies) {
   async function handleCommandMessage(message) {
     const commandName = getCommandName(message);
 
-    if (commandName === '/queue') {
+    if (commandName === '/show_queue') {
       const text = typeof deps.fileRepository.getManualDownloadQueueSummary === 'function'
         ? buildQueueSummaryMessage(await deps.fileRepository.getManualDownloadQueueSummary())
         : buildQueueMessage(await deps.fileRepository.getManualDownloadQueue({ limit: 100 }));
@@ -226,12 +229,16 @@ function createTelegramUpdateHandler(dependencies) {
 
       return {
         accepted: true,
-        reason: 'queue_command',
+        reason: 'show_queue_command',
         files: [],
         deleteMessageCalled: false,
         sendMessageCalled: true,
         responseText: text
       };
+    }
+
+    if (commandName === '/queue') {
+      return handleQueueReturnCommand(message);
     }
 
     if (commandName === '/show_archive') {
@@ -582,6 +589,69 @@ function createTelegramUpdateHandler(dependencies) {
       accepted: true,
       reason: 'archive_command',
       files: archived.map(toResultFile),
+      deleteMessageCalled: false,
+      sendMessageCalled: true,
+      responseText: text
+    };
+  }
+
+  async function handleQueueReturnCommand(message) {
+    const replyToMessageId = message.reply_to_message && message.reply_to_message.message_id;
+
+    if (!Number.isFinite(replyToMessageId)) {
+      const text = buildQueueReplyRequiredMessage();
+
+      await deps.messageSender.sendMessage({
+        chatId: message.chat && message.chat.id,
+        text
+      });
+
+      return {
+        accepted: true,
+        reason: 'queue_reply_required',
+        files: [],
+        deleteMessageCalled: false,
+        sendMessageCalled: true,
+        responseText: text
+      };
+    }
+
+    const file = await deps.fileRepository.findFileBySentMessage(
+      message.chat && message.chat.id,
+      replyToMessageId
+    );
+
+    if (!file) {
+      const text = buildQueueFileNotFoundMessage();
+
+      await deps.messageSender.sendMessage({
+        chatId: message.chat && message.chat.id,
+        text
+      });
+
+      return {
+        accepted: true,
+        reason: 'queue_file_not_found',
+        files: [],
+        deleteMessageCalled: false,
+        sendMessageCalled: true,
+        responseText: text
+      };
+    }
+
+    const queued = await deps.fileRepository.markFilesAsQueued([file.id], now());
+    await logFileEvents(queued.length > 0 ? queued : [file], queued[0] ? queued[0].status : file.status, 'returned_to_queue');
+    const text = buildQueueReturnConfirmedMessage();
+
+    await deps.messageSender.sendMessage({
+      chatId: message.chat && message.chat.id,
+      text
+    });
+
+    return {
+      accepted: true,
+      reason: 'queue_return_command',
+      files: queued.map(toResultFile),
       deleteMessageCalled: false,
       sendMessageCalled: true,
       responseText: text
