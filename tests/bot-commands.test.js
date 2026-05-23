@@ -1,0 +1,36 @@
+'use strict';
+
+const assert = require('assert');
+
+const { BOT_COMMANDS, BOT_COMMAND_SCOPE_PRIVATE_CHATS } = require('../src/domain/bot-commands');
+
+function runTests() {
+  testBotCommandsIncludePublicCommands();
+  testBotCommandsUsePrivateChatScope();
+}
+
+function testBotCommandsIncludePublicCommands() {
+  assert.deepStrictEqual(
+    BOT_COMMANDS.map((command) => command.command),
+    [
+      'show_queue',
+      'queue',
+      'show_archive',
+      'archive',
+      'stats',
+      'stats_image',
+      'clear_queue'
+    ]
+  );
+  assert.strictEqual(BOT_COMMANDS.every((command) => typeof command.description === 'string' && command.description.length > 0), true);
+}
+
+function testBotCommandsUsePrivateChatScope() {
+  assert.deepStrictEqual(BOT_COMMAND_SCOPE_PRIVATE_CHATS, {
+    type: 'all_private_chats'
+  });
+}
+
+module.exports = {
+  runTests
+};

@@ -16,6 +16,8 @@ npm start
 
 Если задан реальный `TELEGRAM_BOT_TOKEN`, команда `npm start` запускает long polling через Telegram Bot API. Бот читает сообщения и callback updates, обрабатывает сообщения от пользователей из `AUTHORIZED_USER_IDS`, скачивает маленькие поддерживаемые файлы в `DOWNLOADS_DIR`, хранит метаданные в `SQLITE_DB_PATH` и удаляет исходные сообщения после успешной обработки, когда Telegram это позволяет.
 
+При запуске бот также синхронизирует меню команд Telegram со списком поддерживаемых команд.
+
 При массовой загрузке бот обрабатывает updates последовательно и сдвигает Telegram offset только после успешной обработки update. Вызовы Telegram API ограничиваются настройкой `TELEGRAM_API_MIN_REQUEST_INTERVAL_MS`.
 
 Для Telegram media groups обработка файлов начинается сразу для каждого update, но бот отправляет один общий итог после `MEDIA_GROUP_RESPONSE_DELAY_MS` миллисекунд без новых updates для той же группы.

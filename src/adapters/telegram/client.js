@@ -19,6 +19,7 @@ function createTelegramClient(options) {
   return {
     getUpdates,
     getFile,
+    setMyCommands,
     sendMessage,
     sendPhoto,
     sendVideo,
@@ -34,6 +35,18 @@ function createTelegramClient(options) {
 
   async function getFile(fileId) {
     return callApi('getFile', { file_id: fileId });
+  }
+
+  async function setMyCommands(commands, options) {
+    const params = {
+      commands: Array.isArray(commands) ? commands : []
+    };
+
+    if (options && options.scope) {
+      params.scope = options.scope;
+    }
+
+    return callApi('setMyCommands', params);
   }
 
   async function sendMessage(payload) {

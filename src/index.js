@@ -12,6 +12,7 @@ const { createTelegramUserFilesRepository } = require('./adapters/sqlite/telegra
 const { createTelegramClient } = require('./adapters/telegram/client');
 const { createTelegramFileDownloader } = require('./adapters/telegram/file-downloader');
 const { createStatsImageRenderer } = require('./application/stats-image-renderer');
+const { BOT_COMMANDS, BOT_COMMAND_SCOPE_PRIVATE_CHATS } = require('./domain/bot-commands');
 
 async function main() {
   loadEnvFile();
@@ -27,6 +28,9 @@ async function main() {
   const telegramClient = createTelegramClient({
     token: config.telegramBotToken,
     minRequestIntervalMs: config.telegramApiMinRequestIntervalMs
+  });
+  await telegramClient.setMyCommands(BOT_COMMANDS, {
+    scope: BOT_COMMAND_SCOPE_PRIVATE_CHATS
   });
   const downloader = createTelegramFileDownloader({
     telegramClient,

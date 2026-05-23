@@ -16,6 +16,8 @@ npm start
 
 With a real `TELEGRAM_BOT_TOKEN`, `npm start` runs long polling against Telegram Bot API. It reads message and callback updates, processes messages from users listed in `AUTHORIZED_USER_IDS`, downloads small supported files to `DOWNLOADS_DIR`, stores metadata in `SQLITE_DB_PATH`, and deletes processed source messages when Telegram allows it.
 
+On startup, the bot also syncs its Telegram command menu with the supported commands.
+
 For bursty uploads, the bot processes updates sequentially and advances the Telegram update offset only after an update is handled successfully. Telegram API calls are throttled by `TELEGRAM_API_MIN_REQUEST_INTERVAL_MS`.
 
 For Telegram media groups, file processing starts immediately for every update, but the bot sends one aggregated summary after `MEDIA_GROUP_RESPONSE_DELAY_MS` milliseconds without new updates for the same group.

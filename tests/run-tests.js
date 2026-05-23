@@ -1,6 +1,7 @@
 'use strict';
 
 const tests = [
+  require('./bot-commands.test'),
   require('./env.test'),
   require('./polling.test'),
   require('./process-supervisor.test'),

@@ -7,6 +7,7 @@ const { buildMultipartBody, createTelegramClient } = require('../src/adapters/te
 
 async function runTests() {
   testBuildMultipartBodyIncludesFieldsAndFile();
+  await testSetMyCommandsUsesTelegramMethod();
   await testSendPhotoUploadsBufferWithMultipart();
 }
 
@@ -69,6 +70,64 @@ async function testSendPhotoUploadsBufferWithMultipart() {
   assert.strictEqual(requests[0].options.headers['Content-Type'].startsWith('multipart/form-data; boundary='), true);
   assert.strictEqual(requests[0].body.includes(Buffer.from('name="photo"')), true);
   assert.strictEqual(requests[0].body.includes(Buffer.from('png-data')), true);
+}
+
+async function testSetMyCommandsUsesTelegramMethod() {
+  const requests = [];
+  const client = createTelegramClient({
+    token: 'test-token',
+    requestFn: createMockRequestFn(requests, { ok: true, result: true })
+  });
+
+  const result = await client.setMyCommands([
+    {
+      command: 'show_queue',
+      description: 'Показать очередь'
+    }
+  ], {
+    scope: {
+      type: 'all_private_chats'
+    }
+  });
+
+  assert.strictEqual(result, true);
+  assert.strictEqual(requests.length, 1);
+  assert.strictEqual(requests[0].options.path, '/bottest-token/setMyCommands');
+  assert.deepStrictEqual(JSON.parse(requests[0].body.toString('utf8')), {
+    commands: [
+      {
+        command: 'show_queue',
+        description: 'Показать очередь'
+      }
+    ],
+    scope: {
+      type: 'all_private_chats'
+    }
+  });
+}
+
+function createMockRequestFn(requests, apiResponse) {
+  return (options, callback) => {
+    const request = new EventEmitter();
+    request.body = Buffer.alloc(0);
+    request.write = (chunk) => {
+      request.body = Buffer.concat([request.body, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
+    };
+    request.end = () => {
+      requests.push({ options, body: request.body });
+
+      const response = new EventEmitter();
+      response.setEncoding = () => {};
+      callback(response);
+
+      process.nextTick(() => {
+        response.emit('data', JSON.stringify(apiResponse));
+        response.emit('end');
+      });
+    };
+
+    return request;
+  };
 }
 
 module.exports = {
