@@ -15,11 +15,16 @@ const {
   buildQueueReplyRequiredMessage,
   buildQueueReturnConfirmedMessage,
   buildQueueSummaryMessage,
+  buildSearchArchiveSummaryMessage,
+  buildSearchContextExpiredMessage,
+  buildSearchQueueSummaryMessage,
+  buildSearchTermRequiredMessage,
   buildStatsMessage,
   buildShownArchiveFilesMessage,
   buildShownFilesMessage,
   createClearQueueConfirmationKeyboard,
   createShowNextFilesKeyboard,
+  getCommandArgumentText,
   getCommandName,
   isCommandMessage
 } = require('../domain/user-messages');
@@ -32,6 +37,12 @@ const CALLBACK_SHOW_LARGEST_ARCHIVE_FILES = 'show_largest_archive_files';
 const CALLBACK_SHOW_SMALLEST_ARCHIVE_FILES = 'show_smallest_archive_files';
 const CALLBACK_CONFIRM_CLEAR_QUEUE = 'confirm_clear_queue';
 const CALLBACK_CANCEL_CLEAR_QUEUE = 'cancel_clear_queue';
+const CALLBACK_SEARCH_QUEUE_NEXT_PREFIX = 'search_queue_next:';
+const CALLBACK_SEARCH_QUEUE_LARGEST_PREFIX = 'search_queue_largest:';
+const CALLBACK_SEARCH_QUEUE_SMALLEST_PREFIX = 'search_queue_smallest:';
+const CALLBACK_SEARCH_ARCHIVE_NEXT_PREFIX = 'search_archive_next:';
+const CALLBACK_SEARCH_ARCHIVE_LARGEST_PREFIX = 'search_archive_largest:';
+const CALLBACK_SEARCH_ARCHIVE_SMALLEST_PREFIX = 'search_archive_smallest:';
 const MANUAL_DOWNLOAD_BATCH_SIZE = 10;
 const DEFAULT_MEDIA_GROUP_RESPONSE_DELAY_MS = 2000;
 
@@ -73,6 +84,8 @@ function createTelegramUpdateHandler(dependencies) {
   const setTimeoutFn = deps.setTimeoutFn || setTimeout;
   const clearTimeoutFn = deps.clearTimeoutFn || clearTimeout;
   const mediaGroupResponses = new Map();
+  const searchContexts = new Map();
+  let nextSearchContextId = 1;
 
   return {
     handleUpdate
@@ -237,6 +250,10 @@ function createTelegramUpdateHandler(dependencies) {
       };
     }
 
+    if (commandName === '/search_queue') {
+      return handleSearchQueueCommand(message);
+    }
+
     if (commandName === '/queue') {
       return handleQueueReturnCommand(message);
     }
@@ -259,6 +276,10 @@ function createTelegramUpdateHandler(dependencies) {
         sendMessageCalled: true,
         responseText: text
       };
+    }
+
+    if (commandName === '/search_archive') {
+      return handleSearchArchiveCommand(message);
     }
 
     if (commandName === '/archive') {
@@ -380,6 +401,30 @@ function createTelegramUpdateHandler(dependencies) {
       return showArchiveBatch(callbackQuery, 'size_asc');
     }
 
+    if (callbackQuery.data && callbackQuery.data.startsWith(CALLBACK_SEARCH_QUEUE_NEXT_PREFIX)) {
+      return showSearchBatch(callbackQuery, CALLBACK_SEARCH_QUEUE_NEXT_PREFIX, 'queue');
+    }
+
+    if (callbackQuery.data && callbackQuery.data.startsWith(CALLBACK_SEARCH_QUEUE_LARGEST_PREFIX)) {
+      return showSearchBatch(callbackQuery, CALLBACK_SEARCH_QUEUE_LARGEST_PREFIX, 'size_desc');
+    }
+
+    if (callbackQuery.data && callbackQuery.data.startsWith(CALLBACK_SEARCH_QUEUE_SMALLEST_PREFIX)) {
+      return showSearchBatch(callbackQuery, CALLBACK_SEARCH_QUEUE_SMALLEST_PREFIX, 'size_asc');
+    }
+
+    if (callbackQuery.data && callbackQuery.data.startsWith(CALLBACK_SEARCH_ARCHIVE_NEXT_PREFIX)) {
+      return showSearchBatch(callbackQuery, CALLBACK_SEARCH_ARCHIVE_NEXT_PREFIX, 'queue');
+    }
+
+    if (callbackQuery.data && callbackQuery.data.startsWith(CALLBACK_SEARCH_ARCHIVE_LARGEST_PREFIX)) {
+      return showSearchBatch(callbackQuery, CALLBACK_SEARCH_ARCHIVE_LARGEST_PREFIX, 'size_desc');
+    }
+
+    if (callbackQuery.data && callbackQuery.data.startsWith(CALLBACK_SEARCH_ARCHIVE_SMALLEST_PREFIX)) {
+      return showSearchBatch(callbackQuery, CALLBACK_SEARCH_ARCHIVE_SMALLEST_PREFIX, 'size_asc');
+    }
+
     if (callbackQuery.data === CALLBACK_CONFIRM_CLEAR_QUEUE) {
       const updated = await deps.fileRepository.markActiveQueueAsDeletedByUser(now());
       await logFileEvents(updated, 'deleted_by_user', 'deleted_by_user');
@@ -427,6 +472,88 @@ function createTelegramUpdateHandler(dependencies) {
     };
   }
 
+  async function handleSearchQueueCommand(message) {
+    const searchTerm = getCommandArgumentText(message);
+
+    if (!searchTerm) {
+      const text = buildSearchTermRequiredMessage('/search_queue');
+
+      await deps.messageSender.sendMessage({
+        chatId: message.chat && message.chat.id,
+        text
+      });
+
+      return {
+        accepted: true,
+        reason: 'search_queue_term_required',
+        files: [],
+        deleteMessageCalled: false,
+        sendMessageCalled: true,
+        responseText: text
+      };
+    }
+
+    const summary = await deps.fileRepository.searchManualDownloadQueueSummary(searchTerm);
+    const text = buildSearchQueueSummaryMessage(searchTerm, summary);
+    const contextId = createSearchContext('queue', searchTerm);
+
+    await deps.messageSender.sendMessage({
+      chatId: message.chat && message.chat.id,
+      text,
+      replyMarkup: summary.fileCount > 0 ? createSearchQueueKeyboard(contextId) : undefined
+    });
+
+    return {
+      accepted: true,
+      reason: 'search_queue_command',
+      files: [],
+      deleteMessageCalled: false,
+      sendMessageCalled: true,
+      responseText: text
+    };
+  }
+
+  async function handleSearchArchiveCommand(message) {
+    const searchTerm = getCommandArgumentText(message);
+
+    if (!searchTerm) {
+      const text = buildSearchTermRequiredMessage('/search_archive');
+
+      await deps.messageSender.sendMessage({
+        chatId: message.chat && message.chat.id,
+        text
+      });
+
+      return {
+        accepted: true,
+        reason: 'search_archive_term_required',
+        files: [],
+        deleteMessageCalled: false,
+        sendMessageCalled: true,
+        responseText: text
+      };
+    }
+
+    const summary = await deps.fileRepository.searchArchiveSummary(searchTerm);
+    const text = buildSearchArchiveSummaryMessage(searchTerm, summary);
+    const contextId = createSearchContext('archive', searchTerm);
+
+    await deps.messageSender.sendMessage({
+      chatId: message.chat && message.chat.id,
+      text,
+      replyMarkup: summary.fileCount > 0 ? createSearchArchiveKeyboard(contextId) : undefined
+    });
+
+    return {
+      accepted: true,
+      reason: 'search_archive_command',
+      files: [],
+      deleteMessageCalled: false,
+      sendMessageCalled: true,
+      responseText: text
+    };
+  }
+
   async function showManualDownloadBatch(callbackQuery, orderBy) {
     return showFileBatch(callbackQuery, {
       source: 'queue',
@@ -439,6 +566,57 @@ function createTelegramUpdateHandler(dependencies) {
       createKeyboard: createShowNextFilesKeyboard,
       reasonEmpty: 'manual_download_queue_empty',
       reasonShown: 'manual_download_batch_shown'
+    });
+  }
+
+  async function showSearchBatch(callbackQuery, prefix, orderBy) {
+    const contextId = callbackQuery.data.slice(prefix.length);
+    const context = searchContexts.get(contextId);
+
+    if (!context) {
+      const text = buildSearchContextExpiredMessage();
+
+      await deps.messageSender.sendMessage({
+        chatId: callbackQuery.message && callbackQuery.message.chat && callbackQuery.message.chat.id,
+        text
+      });
+
+      return {
+        accepted: true,
+        reason: 'search_context_expired',
+        files: [],
+        deleteMessageCalled: false,
+        sendMessageCalled: true,
+        responseText: text
+      };
+    }
+
+    if (context.source === 'archive') {
+      return showFileBatch(callbackQuery, {
+        source: 'archive',
+        orderBy,
+        getFiles: (options) => deps.fileRepository.searchArchiveQueue(context.searchTerm, options),
+        getRemainingCount: () => getRemainingSearchArchiveCount(context.searchTerm),
+        emptyText: 'В архиве нет файлов.',
+        emptyAfterShownText: 'Больше файлов в архиве нет.',
+        buildShownMessage: buildShownArchiveFilesMessage,
+        createKeyboard: () => createSearchArchiveKeyboard(contextId),
+        reasonEmpty: 'search_archive_empty',
+        reasonShown: 'search_archive_batch_shown'
+      });
+    }
+
+    return showFileBatch(callbackQuery, {
+      source: 'queue',
+      orderBy,
+      getFiles: (options) => deps.fileRepository.searchPendingManualDownloadQueue(context.searchTerm, options),
+      getRemainingCount: () => getRemainingSearchManualDownloadCount(context.searchTerm),
+      emptyText: 'В очереди нет файлов для ручного скачивания.',
+      emptyAfterShownText: 'Больше файлов в очереди нет.',
+      buildShownMessage: buildShownFilesMessage,
+      createKeyboard: () => createSearchQueueKeyboard(contextId),
+      reasonEmpty: 'search_queue_empty',
+      reasonShown: 'search_queue_batch_shown'
     });
   }
 
@@ -723,6 +901,16 @@ function createTelegramUpdateHandler(dependencies) {
     return archiveQueue.length;
   }
 
+  async function getRemainingSearchManualDownloadCount(searchTerm) {
+    const summary = await deps.fileRepository.searchPendingManualDownloadSummary(searchTerm);
+    return summary && Number.isFinite(summary.fileCount) ? summary.fileCount : 0;
+  }
+
+  async function getRemainingSearchArchiveCount(searchTerm) {
+    const summary = await deps.fileRepository.searchArchiveSummary(searchTerm);
+    return summary && Number.isFinite(summary.fileCount) ? summary.fileCount : 0;
+  }
+
   function createArchiveKeyboard() {
     return createShowNextFilesKeyboard({
       callbackData: {
@@ -731,6 +919,32 @@ function createTelegramUpdateHandler(dependencies) {
         showSmallest: CALLBACK_SHOW_SMALLEST_ARCHIVE_FILES
       }
     });
+  }
+
+  function createSearchQueueKeyboard(contextId) {
+    return createShowNextFilesKeyboard({
+      callbackData: {
+        showNext: `${CALLBACK_SEARCH_QUEUE_NEXT_PREFIX}${contextId}`,
+        showLargest: `${CALLBACK_SEARCH_QUEUE_LARGEST_PREFIX}${contextId}`,
+        showSmallest: `${CALLBACK_SEARCH_QUEUE_SMALLEST_PREFIX}${contextId}`
+      }
+    });
+  }
+
+  function createSearchArchiveKeyboard(contextId) {
+    return createShowNextFilesKeyboard({
+      callbackData: {
+        showNext: `${CALLBACK_SEARCH_ARCHIVE_NEXT_PREFIX}${contextId}`,
+        showLargest: `${CALLBACK_SEARCH_ARCHIVE_LARGEST_PREFIX}${contextId}`,
+        showSmallest: `${CALLBACK_SEARCH_ARCHIVE_SMALLEST_PREFIX}${contextId}`
+      }
+    });
+  }
+
+  function createSearchContext(source, searchTerm) {
+    const contextId = (nextSearchContextId++).toString(36);
+    searchContexts.set(contextId, { source, searchTerm });
+    return contextId;
   }
 
   function toResultFile(file, overrideStatus) {

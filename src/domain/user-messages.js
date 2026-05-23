@@ -12,6 +12,17 @@ function getCommandName(message) {
   return message.text.trim().split(/\s+/)[0].split('@')[0];
 }
 
+function getCommandArgumentText(message) {
+  if (!isCommandMessage(message)) {
+    return '';
+  }
+
+  const text = message.text.trim();
+  const command = text.split(/\s+/)[0];
+
+  return text.slice(command.length).trim();
+}
+
 function createShowNextFilesKeyboard(options) {
   const normalizedOptions = options || {};
   const includeSizeButtons = normalizedOptions.includeSizeButtons !== false;
@@ -110,6 +121,22 @@ function buildArchiveSummaryMessage(summary) {
   const unknownSizeText = unknownSizeCount > 0 ? `, файлов с неизвестным размером: ${unknownSizeCount}` : '';
 
   return `В архиве файлов: ${fileCount}. Суммарный объем: ${formatFileSize(normalizedSummary.totalKnownSize || 0)}${unknownSizeText}.`;
+}
+
+function buildSearchQueueSummaryMessage(searchTerm, summary) {
+  return `Поиск в очереди по "${searchTerm}": ${buildQueueSummaryMessage(summary)}`;
+}
+
+function buildSearchArchiveSummaryMessage(searchTerm, summary) {
+  return `Поиск в архиве по "${searchTerm}": ${buildArchiveSummaryMessage(summary)}`;
+}
+
+function buildSearchTermRequiredMessage(commandName) {
+  return `Укажите поисковый запрос: ${commandName} <search_term>`;
+}
+
+function buildSearchContextExpiredMessage() {
+  return 'Поиск устарел. Запустите команду поиска еще раз.';
 }
 
 function buildStatsMessage(stats) {
@@ -288,11 +315,16 @@ function formatFileSize(fileSize) {
 module.exports = {
   isCommandMessage,
   getCommandName,
+  getCommandArgumentText,
   createShowNextFilesKeyboard,
   createClearQueueConfirmationKeyboard,
   buildQueueMessage,
   buildQueueSummaryMessage,
   buildArchiveSummaryMessage,
+  buildSearchQueueSummaryMessage,
+  buildSearchArchiveSummaryMessage,
+  buildSearchTermRequiredMessage,
+  buildSearchContextExpiredMessage,
   buildStatsMessage,
   buildShownFilesMessage,
   buildShownArchiveFilesMessage,

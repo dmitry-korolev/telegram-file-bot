@@ -14,8 +14,10 @@ function testBotCommandsIncludePublicCommands() {
     BOT_COMMANDS.map((command) => command.command),
     [
       'show_queue',
+      'search_queue',
       'queue',
       'show_archive',
+      'search_archive',
       'archive',
       'stats',
       'stats_image',

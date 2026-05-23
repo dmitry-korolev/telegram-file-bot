@@ -6,6 +6,7 @@ const tests = [
   require('./polling.test'),
   require('./process-supervisor.test'),
   require('./process-message.test'),
+  require('./rename-downloaded-files.test'),
   require('./stats-image.test'),
   require('./sqlite-repository.test'),
   require('./telegram-client.test'),

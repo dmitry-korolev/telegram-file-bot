@@ -45,8 +45,10 @@ Small files up to `SMALL_FILE_LIMIT_BYTES` are downloaded automatically to `DOWN
 Available commands:
 
 - `/show_queue` — show the shared queue summary: file count and total known size.
+- `/search_queue <search_term>` — search queued files by original file name and show the same next/largest/smallest buttons for matching files.
 - `/queue` — when sent as a reply to media previously sent by the bot, return that file to the queue as not downloaded.
 - `/show_archive` — show the archive summary and buttons for archived files.
+- `/search_archive <search_term>` — search archived files by original file name and show the same next/largest/smallest buttons for matching files.
 - `/archive` — when sent as a reply to media previously sent by the bot, move that file to the archive.
 - `/stats` — show aggregate bot statistics: total files, known total size, active queue size, downloaded files, confirmed manual downloads, duplicates, errors, and attachment types.
 - `/stats_image` — send aggregate bot statistics as a PNG image with charts for file sizes, attachment types, and processing statuses.
@@ -61,6 +63,18 @@ Available buttons:
 - `Отмена` — cancels queue cleanup.
 
 The same next/largest/smallest buttons are used for `/show_archive`, but they operate on archived files. Files shown from the archive are removed from the archive and marked as `download_confirmed`.
+
+To migrate already downloaded local files to the current naming rule, first inspect the plan:
+
+```bash
+npm run rename:downloads
+```
+
+Apply the renames and update `local_path` in SQLite:
+
+```bash
+npm run rename:downloads -- --apply
+```
 
 Manual download flow:
 

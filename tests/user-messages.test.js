@@ -7,6 +7,9 @@ const {
   buildArchiveFileNotFoundMessage,
   buildArchiveReplyRequiredMessage,
   buildArchiveSummaryMessage,
+  buildSearchArchiveSummaryMessage,
+  buildSearchQueueSummaryMessage,
+  buildSearchTermRequiredMessage,
   buildShownArchiveFilesMessage,
   buildShownFilesMessage,
   buildQueueMessage,
@@ -17,6 +20,7 @@ const {
   buildProcessingResponse,
   buildStatsMessage,
   createShowNextFilesKeyboard,
+  getCommandArgumentText,
   isCommandMessage
 } = require('../src/domain/user-messages');
 
@@ -25,6 +29,7 @@ function runTests() {
   testQueueMessageUsesSummaryOnly();
   testQueueSummaryMessageUsesAggregate();
   testArchiveSummaryMessageUsesAggregate();
+  testSearchMessages();
   testStatsMessage();
   testShowNextKeyboardIncludesQueueAndSizeActions();
   testShowNextKeyboardCanUseCustomCallbacks();
@@ -71,6 +76,8 @@ function testCommandMessageDetection() {
   assert.strictEqual(isCommandMessage({ text: ' /clear_queue' }), true);
   assert.strictEqual(isCommandMessage({ text: 'hello' }), false);
   assert.strictEqual(isCommandMessage({ caption: '/queue' }), false);
+  assert.strictEqual(getCommandArgumentText({ text: '/search_queue report final.pdf' }), 'report final.pdf');
+  assert.strictEqual(getCommandArgumentText({ text: '/search_queue@my_bot report' }), 'report');
 }
 
 function testShowNextKeyboardIncludesQueueAndSizeActions() {
@@ -189,6 +196,29 @@ function testArchiveSummaryMessageUsesAggregate() {
     'В архиве файлов: 2. Суммарный объем: 30.0 МБ.'
   );
   assert.strictEqual(buildArchiveSummaryMessage({ fileCount: 0 }), 'В архиве нет файлов.');
+}
+
+function testSearchMessages() {
+  assert.strictEqual(
+    buildSearchQueueSummaryMessage('report', {
+      fileCount: 2,
+      totalKnownSize: 30 * 1024 * 1024,
+      unknownSizeFiles: 0
+    }),
+    'Поиск в очереди по "report": В очереди файлов: 2. Суммарный объем: 30.0 МБ.'
+  );
+  assert.strictEqual(
+    buildSearchArchiveSummaryMessage('clip', {
+      fileCount: 1,
+      totalKnownSize: 10 * 1024 * 1024,
+      unknownSizeFiles: 0
+    }),
+    'Поиск в архиве по "clip": В архиве файлов: 1. Суммарный объем: 10.0 МБ.'
+  );
+  assert.strictEqual(
+    buildSearchTermRequiredMessage('/search_queue'),
+    'Укажите поисковый запрос: /search_queue <search_term>'
+  );
 }
 
 function testSingleDownloadedFileMessage() {

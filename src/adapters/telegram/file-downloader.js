@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('fs');
 const path = require('path');
 
 function createTelegramFileDownloader(options) {
@@ -31,11 +32,39 @@ function createTelegramFileDownloader(options) {
   }
 
   function buildLocalPath(attachment, telegramFilePath) {
-    const extension = path.extname(telegramFilePath || attachment.file_name || '');
-    const fileName = `${sanitizeFileName(attachment.file_unique_id || attachment.file_id)}${extension}`;
+    const fileName = chooseLocalFileName(downloadsDir, attachment, telegramFilePath);
 
     return path.resolve(downloadsDir, fileName);
   }
+}
+
+function chooseLocalFileName(downloadsDir, attachment, telegramFilePath, currentPath) {
+  const originalFileName = attachment.file_name ? sanitizeFileName(path.basename(attachment.file_name)) : null;
+
+  if (!originalFileName) {
+    const extension = path.extname(telegramFilePath || '');
+    return `${sanitizeFileName(attachment.file_unique_id || attachment.file_id)}${extension}`;
+  }
+
+  const originalPath = path.resolve(downloadsDir, originalFileName);
+
+  if (!pathExistsOutsideCurrentPath(originalPath, currentPath)) {
+    return originalFileName;
+  }
+
+  const parsed = path.parse(originalFileName);
+  const baseName = parsed.name || 'telegram-file';
+  const uniqueId = sanitizeFileName(attachment.file_unique_id || attachment.file_id);
+
+  return `${baseName}-${uniqueId}${parsed.ext}`;
+}
+
+function pathExistsOutsideCurrentPath(targetPath, currentPath) {
+  if (!fs.existsSync(targetPath)) {
+    return false;
+  }
+
+  return !currentPath || path.resolve(targetPath) !== path.resolve(currentPath);
 }
 
 function sanitizeFileName(value) {
@@ -50,5 +79,6 @@ function sanitizeFileName(value) {
 
 module.exports = {
   createTelegramFileDownloader,
+  chooseLocalFileName,
   sanitizeFileName
 };

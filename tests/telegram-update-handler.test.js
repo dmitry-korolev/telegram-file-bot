@@ -32,6 +32,8 @@ async function runTests() {
   await testMediaGroupAggregatesResponseAfterDelay();
   await testSeparateMediaGroupsDoNotMixResponses();
   await testShowQueueCommandShowsQueue();
+  await testSearchQueueCommandShowsFilteredQueueAndButtons();
+  await testSearchQueueButtonShowsFilteredBatch();
   await testQueueCommandRequiresReply();
   await testQueueCommandReportsUnknownReply();
   await testQueueCommandReturnsReplyFileToQueue();
@@ -39,6 +41,7 @@ async function runTests() {
   await testArchiveCommandReportsUnknownReply();
   await testArchiveCommandMarksReplyFileArchived();
   await testShowArchiveCommandShowsArchiveSummary();
+  await testSearchArchiveCommandShowsFilteredArchiveAndButtons();
   await testStatsCommandShowsAggregateStats();
   await testStatsImageCommandSendsPngPhoto();
   await testClearQueueCommandRequestsConfirmation();
@@ -498,6 +501,59 @@ async function testShowQueueCommandShowsQueue() {
   assert.deepStrictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[1][1].callback_data, CALLBACK_SHOW_SMALLEST_FILES);
 }
 
+async function testSearchQueueCommandShowsFilteredQueueAndButtons() {
+  const deps = createMockDependencies({
+    manualQueue: [
+      createRepositoryRecord({ queue_position: 1, file_name: 'family-report.mp4', file_size: 25 * 1024 * 1024, status: 'pending_manual_download' }),
+      createRepositoryRecord({ queue_position: 2, file_name: 'other.pdf', file_size: 10 * 1024 * 1024, status: 'pending_manual_download' })
+    ]
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 52,
+    message: createMessage({ text: '/search_queue report' })
+  });
+
+  assert.strictEqual(result.reason, 'search_queue_command');
+  assert.strictEqual(deps.messageSender.calls[0].text, 'Поиск в очереди по "report": В очереди файлов: 1. Суммарный объем: 25.0 МБ.');
+  assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].text, 'Показать следующие вложения');
+  assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].callback_data.startsWith('search_queue_next:'), true);
+  assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[1][0].callback_data.startsWith('search_queue_largest:'), true);
+  assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[1][1].callback_data.startsWith('search_queue_smallest:'), true);
+}
+
+async function testSearchQueueButtonShowsFilteredBatch() {
+  const deps = createMockDependencies({
+    pendingQueue: [
+      createRepositoryRecord({ id: 41, queue_position: 1, file_name: 'family-report.mp4', file_kind: 'video', file_id: 'video-file', file_size: 25 * 1024 * 1024, status: 'pending_manual_download' }),
+      createRepositoryRecord({ id: 42, queue_position: 2, file_name: 'other.pdf', file_kind: 'document', file_id: 'doc-file', file_size: 10 * 1024 * 1024, status: 'pending_manual_download' })
+    ],
+    manualQueue: [
+      createRepositoryRecord({ id: 41, queue_position: 1, file_name: 'family-report.mp4', file_kind: 'video', file_id: 'video-file', file_size: 25 * 1024 * 1024, status: 'pending_manual_download' }),
+      createRepositoryRecord({ id: 42, queue_position: 2, file_name: 'other.pdf', file_kind: 'document', file_id: 'doc-file', file_size: 10 * 1024 * 1024, status: 'pending_manual_download' })
+    ]
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  await handler.handleUpdate({
+    update_id: 53,
+    message: createMessage({ text: '/search_queue report' })
+  });
+
+  const callbackData = deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].callback_data;
+  const result = await handler.handleUpdate({
+    update_id: 54,
+    callback_query: createCallbackQuery(callbackData)
+  });
+
+  assert.strictEqual(result.reason, 'search_queue_batch_shown');
+  assert.strictEqual(deps.fileSender.calls.length, 1);
+  assert.strictEqual(deps.fileSender.calls[0].method, 'sendVideo');
+  assert.strictEqual(deps.fileSender.calls[0].fileId, 'video-file');
+  assert.deepStrictEqual(deps.fileRepository.confirmedIds, [41]);
+}
+
 async function testQueueCommandRequiresReply() {
   const deps = createMockDependencies();
   const handler = createTelegramUpdateHandler(deps);
@@ -644,6 +700,28 @@ async function testShowArchiveCommandShowsArchiveSummary() {
   assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].callback_data, CALLBACK_SHOW_NEXT_ARCHIVE_FILES);
   assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[1][0].callback_data, CALLBACK_SHOW_LARGEST_ARCHIVE_FILES);
   assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[1][1].callback_data, CALLBACK_SHOW_SMALLEST_ARCHIVE_FILES);
+}
+
+async function testSearchArchiveCommandShowsFilteredArchiveAndButtons() {
+  const deps = createMockDependencies({
+    archiveQueue: [
+      createRepositoryRecord({ queue_position: 1, file_name: 'archive-report.mp4', file_size: 25 * 1024 * 1024, status: 'archived' }),
+      createRepositoryRecord({ queue_position: 2, file_name: 'other.pdf', file_size: 10 * 1024 * 1024, status: 'archived' })
+    ]
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 55,
+    message: createMessage({ text: '/search_archive report' })
+  });
+
+  assert.strictEqual(result.reason, 'search_archive_command');
+  assert.strictEqual(deps.messageSender.calls[0].text, 'Поиск в архиве по "report": В архиве файлов: 1. Суммарный объем: 25.0 МБ.');
+  assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].text, 'Показать следующие вложения');
+  assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].callback_data.startsWith('search_archive_next:'), true);
+  assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[1][0].callback_data.startsWith('search_archive_largest:'), true);
+  assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[1][1].callback_data.startsWith('search_archive_smallest:'), true);
 }
 
 async function testClearQueueCommandRequestsConfirmation() {
@@ -996,6 +1074,20 @@ function createMockDependencies(options) {
         unknownSizeFiles: pending.filter((record) => !Number.isFinite(record.file_size)).length
       };
     },
+    async searchManualDownloadQueueSummary(searchTerm) {
+      const active = filterByFileName(
+        this.manualQueue.filter((record) => ['pending_manual_download', 'pending_size_unknown', 'shown_to_user'].includes(record.status)),
+        searchTerm
+      );
+      return buildMockSummary(active);
+    },
+    async searchPendingManualDownloadSummary(searchTerm) {
+      const pending = filterByFileName(
+        this.manualQueue.filter((record) => ['pending_manual_download', 'pending_size_unknown'].includes(record.status)),
+        searchTerm
+      );
+      return buildMockSummary(pending);
+    },
     async getPendingManualDownloadQueue(options) {
       const limit = options && options.limit ? options.limit : 10;
       const orderBy = options && options.orderBy ? options.orderBy : 'queue';
@@ -1021,6 +1113,31 @@ function createMockDependencies(options) {
 
       return this.pendingQueue.filter((record) => record.status === 'pending_manual_download' && record.file_kind === 'document').slice(0, limit);
     },
+    async searchPendingManualDownloadQueue(searchTerm, options) {
+      const limit = options && options.limit ? options.limit : 10;
+      const orderBy = options && options.orderBy ? options.orderBy : 'queue';
+      const matching = filterByFileName(this.pendingQueue, searchTerm);
+
+      if (orderBy === 'size_desc' || orderBy === 'size_asc') {
+        return matching
+          .filter((record) => record.status === 'pending_manual_download' && Number.isFinite(record.file_size))
+          .slice()
+          .sort((left, right) => (
+            orderBy === 'size_desc'
+              ? right.file_size - left.file_size
+              : left.file_size - right.file_size
+          ))
+          .slice(0, limit);
+      }
+
+      const media = matching.filter((record) => record.status === 'pending_manual_download' && ['photo', 'video'].includes(record.file_kind));
+
+      if (media.length > 0) {
+        return media.slice(0, limit);
+      }
+
+      return matching.filter((record) => record.status === 'pending_manual_download' && record.file_kind === 'document').slice(0, limit);
+    },
     async getArchiveQueue(options) {
       const limit = options && options.limit ? options.limit : 10;
       const orderBy = options && options.orderBy ? options.orderBy : 'queue';
@@ -1045,6 +1162,31 @@ function createMockDependencies(options) {
 
       return this.archiveQueue.filter((record) => record.status === 'archived' && record.file_kind === 'document').slice(0, limit);
     },
+    async searchArchiveQueue(searchTerm, options) {
+      const limit = options && options.limit ? options.limit : 10;
+      const orderBy = options && options.orderBy ? options.orderBy : 'queue';
+      const matching = filterByFileName(this.archiveQueue, searchTerm);
+
+      if (orderBy === 'size_desc' || orderBy === 'size_asc') {
+        return matching
+          .filter((record) => record.status === 'archived' && Number.isFinite(record.file_size))
+          .slice()
+          .sort((left, right) => (
+            orderBy === 'size_desc'
+              ? right.file_size - left.file_size
+              : left.file_size - right.file_size
+          ))
+          .slice(0, limit);
+      }
+
+      const media = matching.filter((record) => record.status === 'archived' && ['photo', 'video'].includes(record.file_kind));
+
+      if (media.length > 0) {
+        return media.slice(0, limit);
+      }
+
+      return matching.filter((record) => record.status === 'archived' && record.file_kind === 'document').slice(0, limit);
+    },
     async getArchiveSummary() {
       if (this.archiveSummary) {
         return this.archiveSummary;
@@ -1058,6 +1200,10 @@ function createMockDependencies(options) {
         ), 0),
         unknownSizeFiles: archived.filter((record) => !Number.isFinite(record.file_size)).length
       };
+    },
+    async searchArchiveSummary(searchTerm) {
+      const archived = filterByFileName(this.archiveQueue.filter((record) => record.status === 'archived'), searchTerm);
+      return buildMockSummary(archived);
     },
     async getShownToUserFiles() {
       return this.shownQueue;
@@ -1287,6 +1433,26 @@ function createMockDependencies(options) {
       throw new Error(`Cannot send ${fileId}`);
     }
   }
+}
+
+function filterByFileName(records, searchTerm) {
+  const needle = String(searchTerm || '').trim().toLowerCase();
+
+  if (!needle) {
+    return [];
+  }
+
+  return records.filter((record) => String(record.file_name || '').toLowerCase().includes(needle));
+}
+
+function buildMockSummary(records) {
+  return {
+    fileCount: records.length,
+    totalKnownSize: records.reduce((sum, record) => (
+      Number.isFinite(record.file_size) ? sum + record.file_size : sum
+    ), 0),
+    unknownSizeFiles: records.filter((record) => !Number.isFinite(record.file_size)).length
+  };
 }
 
 function createMessage(overrides) {

@@ -7,6 +7,7 @@
     "start": "node src/start.js",
     "dev": "node --watch src/index.js",
     "test": "node tests/run-tests.js",
+    "rename:downloads": "node scripts/rename-downloaded-files.js",
     "docker:build": "docker build -t telegram-file-bot:stage1 ."
   },
   "keywords": [

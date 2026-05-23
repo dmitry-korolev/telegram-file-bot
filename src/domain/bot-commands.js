@@ -6,12 +6,20 @@ const BOT_COMMANDS = [
     description: 'Показать очередь'
   },
   {
+    command: 'search_queue',
+    description: 'Найти файл в очереди'
+  },
+  {
     command: 'queue',
     description: 'Вернуть файл в очередь'
   },
   {
     command: 'show_archive',
     description: 'Показать архив'
+  },
+  {
+    command: 'search_archive',
+    description: 'Найти файл в архиве'
   },
   {
     command: 'archive',

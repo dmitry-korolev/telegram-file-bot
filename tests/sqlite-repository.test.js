@@ -19,7 +19,9 @@ function runTests() {
   testManualDownloadQueueIncludesActiveStatuses();
   testManualDownloadQueueSummaryIsNotLimited();
   testPendingManualDownloadSummaryExcludesShownRecords();
+  testSearchManualDownloadQueueByFileName();
   testArchiveQueueAndSummaryUseArchivedStatus();
+  testSearchArchiveQueueByFileName();
   testGetShownToUserFilesReturnsShownRecords();
   testGetStatsAggregatesFiles();
   testGetStatsImageDataAggregatesBuckets();
@@ -338,6 +340,47 @@ function testPendingManualDownloadSummaryExcludesShownRecords() {
   });
 }
 
+function testSearchManualDownloadQueueByFileName() {
+  withRepository((repository) => {
+    repository.create(createRecord({
+      file_id: 'video-1',
+      file_unique_id: 'video-unique-1',
+      file_name: 'Trip Report.mp4',
+      file_kind: 'video',
+      status: 'pending_manual_download',
+      queue_position: 1,
+      file_size: 30 * 1024 * 1024
+    }));
+    repository.create(createRecord({
+      file_id: 'doc-1',
+      file_unique_id: 'doc-unique-1',
+      file_name: 'trip notes.pdf',
+      file_kind: 'document',
+      status: 'pending_manual_download',
+      queue_position: 2,
+      file_size: 10 * 1024 * 1024
+    }));
+    repository.create(createRecord({
+      file_id: 'archived-1',
+      file_unique_id: 'archived-unique-1',
+      file_name: 'trip archive.zip',
+      file_kind: 'document',
+      status: 'archived',
+      queue_position: 3,
+      file_size: 50 * 1024 * 1024
+    }));
+
+    const queue = repository.searchPendingManualDownloadQueue('trip', { limit: 10 });
+    const largest = repository.searchPendingManualDownloadQueue('trip', { limit: 10, orderBy: 'size_desc' });
+    const summary = repository.searchManualDownloadQueueSummary('TRIP');
+
+    assert.deepStrictEqual(queue.map((item) => item.file_unique_id), ['video-unique-1']);
+    assert.deepStrictEqual(largest.map((item) => item.file_unique_id), ['video-unique-1', 'doc-unique-1']);
+    assert.strictEqual(summary.fileCount, 2);
+    assert.strictEqual(summary.totalKnownSize, 40 * 1024 * 1024);
+  });
+}
+
 function testArchiveQueueAndSummaryUseArchivedStatus() {
   withRepository((repository) => {
     repository.create(createRecord({
@@ -371,6 +414,47 @@ function testArchiveQueueAndSummaryUseArchivedStatus() {
 
     assert.deepStrictEqual(next.map((item) => item.file_unique_id), ['archived-photo-unique']);
     assert.deepStrictEqual(largest.map((item) => item.file_unique_id), ['archived-photo-unique', 'archived-doc-unique']);
+    assert.strictEqual(summary.fileCount, 2);
+    assert.strictEqual(summary.totalKnownSize, 40 * 1024 * 1024);
+  });
+}
+
+function testSearchArchiveQueueByFileName() {
+  withRepository((repository) => {
+    repository.create(createRecord({
+      file_id: 'archived-video',
+      file_unique_id: 'archived-video-unique',
+      file_name: 'Holiday Clip.mp4',
+      file_kind: 'video',
+      status: 'archived',
+      queue_position: 1,
+      file_size: 30 * 1024 * 1024
+    }));
+    repository.create(createRecord({
+      file_id: 'archived-doc',
+      file_unique_id: 'archived-doc-unique',
+      file_name: 'holiday notes.pdf',
+      file_kind: 'document',
+      status: 'archived',
+      queue_position: 2,
+      file_size: 10 * 1024 * 1024
+    }));
+    repository.create(createRecord({
+      file_id: 'pending-video',
+      file_unique_id: 'pending-video-unique',
+      file_name: 'holiday pending.mp4',
+      file_kind: 'video',
+      status: 'pending_manual_download',
+      queue_position: 3,
+      file_size: 50 * 1024 * 1024
+    }));
+
+    const queue = repository.searchArchiveQueue('holiday', { limit: 10 });
+    const smallest = repository.searchArchiveQueue('holiday', { limit: 10, orderBy: 'size_asc' });
+    const summary = repository.searchArchiveSummary('HOLIDAY');
+
+    assert.deepStrictEqual(queue.map((item) => item.file_unique_id), ['archived-video-unique']);
+    assert.deepStrictEqual(smallest.map((item) => item.file_unique_id), ['archived-doc-unique', 'archived-video-unique']);
     assert.strictEqual(summary.fileCount, 2);
     assert.strictEqual(summary.totalKnownSize, 40 * 1024 * 1024);
   });

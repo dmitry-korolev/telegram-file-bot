@@ -16,8 +16,13 @@ function createTelegramUserFilesRepository(sqliteClient) {
     getManualDownloadQueue,
     getManualDownloadQueueSummary,
     getPendingManualDownloadSummary,
+    searchPendingManualDownloadQueue,
+    searchManualDownloadQueueSummary,
+    searchPendingManualDownloadSummary,
     getArchiveQueue,
     getArchiveSummary,
+    searchArchiveQueue,
+    searchArchiveSummary,
     getShownToUserFiles,
     getStats,
     getStatsImageData,
@@ -229,6 +234,55 @@ function createTelegramUserFilesRepository(sqliteClient) {
     `);
   }
 
+  function searchPendingManualDownloadQueue(searchTerm, options) {
+    const normalizedOptions = options || {};
+    const limit = normalizePositiveInteger(normalizedOptions.limit, 10);
+    const orderBy = normalizedOptions.orderBy || 'queue';
+    const fileNameCondition = buildFileNameSearchCondition(searchTerm);
+
+    if (!fileNameCondition) {
+      return [];
+    }
+
+    if (orderBy === 'size_desc' || orderBy === 'size_asc') {
+      const direction = orderBy === 'size_desc' ? 'DESC' : 'ASC';
+
+      return sqliteClient.query(`
+        SELECT *
+        FROM telegram_user_files
+        WHERE status = 'pending_manual_download'
+          AND file_size IS NOT NULL
+          AND ${fileNameCondition}
+        ORDER BY file_size ${direction}, queue_position ASC, received_at ASC, id ASC
+        LIMIT ${limit};
+      `);
+    }
+
+    const photoAndVideoRows = sqliteClient.query(`
+      SELECT *
+      FROM telegram_user_files
+      WHERE status = 'pending_manual_download'
+        AND file_kind IN ('photo', 'video')
+        AND ${fileNameCondition}
+      ORDER BY queue_position ASC, received_at ASC, id ASC
+      LIMIT ${limit};
+    `);
+
+    if (photoAndVideoRows.length > 0) {
+      return photoAndVideoRows;
+    }
+
+    return sqliteClient.query(`
+      SELECT *
+      FROM telegram_user_files
+      WHERE status = 'pending_manual_download'
+        AND file_kind = 'document'
+        AND ${fileNameCondition}
+      ORDER BY queue_position ASC, received_at ASC, id ASC
+      LIMIT ${limit};
+    `);
+  }
+
   function getManualDownloadQueue(options) {
     const normalizedOptions = options || {};
     const limit = normalizePositiveInteger(normalizedOptions.limit, 100);
@@ -263,6 +317,46 @@ function createTelegramUserFilesRepository(sqliteClient) {
         SUM(CASE WHEN file_size IS NULL THEN 1 ELSE 0 END) AS unknown_size_files
       FROM telegram_user_files
       WHERE status IN ('pending_manual_download', 'pending_size_unknown');
+    `);
+
+    return normalizeQueueSummaryRow(rows[0] || {});
+  }
+
+  function searchManualDownloadQueueSummary(searchTerm) {
+    const fileNameCondition = buildFileNameSearchCondition(searchTerm);
+
+    if (!fileNameCondition) {
+      return normalizeQueueSummaryRow({});
+    }
+
+    const rows = sqliteClient.query(`
+      SELECT
+        COUNT(*) AS file_count,
+        COALESCE(SUM(CASE WHEN file_size IS NOT NULL THEN file_size ELSE 0 END), 0) AS total_known_size,
+        SUM(CASE WHEN file_size IS NULL THEN 1 ELSE 0 END) AS unknown_size_files
+      FROM telegram_user_files
+      WHERE status IN ('pending_manual_download', 'pending_size_unknown', 'shown_to_user')
+        AND ${fileNameCondition};
+    `);
+
+    return normalizeQueueSummaryRow(rows[0] || {});
+  }
+
+  function searchPendingManualDownloadSummary(searchTerm) {
+    const fileNameCondition = buildFileNameSearchCondition(searchTerm);
+
+    if (!fileNameCondition) {
+      return normalizeQueueSummaryRow({});
+    }
+
+    const rows = sqliteClient.query(`
+      SELECT
+        COUNT(*) AS file_count,
+        COALESCE(SUM(CASE WHEN file_size IS NOT NULL THEN file_size ELSE 0 END), 0) AS total_known_size,
+        SUM(CASE WHEN file_size IS NULL THEN 1 ELSE 0 END) AS unknown_size_files
+      FROM telegram_user_files
+      WHERE status IN ('pending_manual_download', 'pending_size_unknown')
+        AND ${fileNameCondition};
     `);
 
     return normalizeQueueSummaryRow(rows[0] || {});
@@ -309,6 +403,55 @@ function createTelegramUserFilesRepository(sqliteClient) {
     `);
   }
 
+  function searchArchiveQueue(searchTerm, options) {
+    const normalizedOptions = options || {};
+    const limit = normalizePositiveInteger(normalizedOptions.limit, 10);
+    const orderBy = normalizedOptions.orderBy || 'queue';
+    const fileNameCondition = buildFileNameSearchCondition(searchTerm);
+
+    if (!fileNameCondition) {
+      return [];
+    }
+
+    if (orderBy === 'size_desc' || orderBy === 'size_asc') {
+      const direction = orderBy === 'size_desc' ? 'DESC' : 'ASC';
+
+      return sqliteClient.query(`
+        SELECT *
+        FROM telegram_user_files
+        WHERE status = 'archived'
+          AND file_size IS NOT NULL
+          AND ${fileNameCondition}
+        ORDER BY file_size ${direction}, queue_position ASC, received_at ASC, id ASC
+        LIMIT ${limit};
+      `);
+    }
+
+    const photoAndVideoRows = sqliteClient.query(`
+      SELECT *
+      FROM telegram_user_files
+      WHERE status = 'archived'
+        AND file_kind IN ('photo', 'video')
+        AND ${fileNameCondition}
+      ORDER BY queue_position ASC, received_at ASC, id ASC
+      LIMIT ${limit};
+    `);
+
+    if (photoAndVideoRows.length > 0) {
+      return photoAndVideoRows;
+    }
+
+    return sqliteClient.query(`
+      SELECT *
+      FROM telegram_user_files
+      WHERE status = 'archived'
+        AND file_kind = 'document'
+        AND ${fileNameCondition}
+      ORDER BY queue_position ASC, received_at ASC, id ASC
+      LIMIT ${limit};
+    `);
+  }
+
   function getArchiveSummary() {
     const rows = sqliteClient.query(`
       SELECT
@@ -317,6 +460,26 @@ function createTelegramUserFilesRepository(sqliteClient) {
         SUM(CASE WHEN file_size IS NULL THEN 1 ELSE 0 END) AS unknown_size_files
       FROM telegram_user_files
       WHERE status = 'archived';
+    `);
+
+    return normalizeQueueSummaryRow(rows[0] || {});
+  }
+
+  function searchArchiveSummary(searchTerm) {
+    const fileNameCondition = buildFileNameSearchCondition(searchTerm);
+
+    if (!fileNameCondition) {
+      return normalizeQueueSummaryRow({});
+    }
+
+    const rows = sqliteClient.query(`
+      SELECT
+        COUNT(*) AS file_count,
+        COALESCE(SUM(CASE WHEN file_size IS NOT NULL THEN file_size ELSE 0 END), 0) AS total_known_size,
+        SUM(CASE WHEN file_size IS NULL THEN 1 ELSE 0 END) AS unknown_size_files
+      FROM telegram_user_files
+      WHERE status = 'archived'
+        AND ${fileNameCondition};
     `);
 
     return normalizeQueueSummaryRow(rows[0] || {});
@@ -744,6 +907,20 @@ function optionalNumber(value) {
 
 function optionalValue(value) {
   return value === undefined ? null : value;
+}
+
+function buildFileNameSearchCondition(searchTerm) {
+  if (typeof searchTerm !== 'string' || searchTerm.trim().length === 0) {
+    return null;
+  }
+
+  const pattern = `%${escapeLikePattern(searchTerm.trim())}%`;
+
+  return `LOWER(COALESCE(file_name, '')) LIKE LOWER(${toSqlValue(pattern)}) ESCAPE '\\'`;
+}
+
+function escapeLikePattern(value) {
+  return value.replace(/[\\%_]/g, (character) => `\\${character}`);
 }
 
 function normalizePositiveInteger(value, fallback) {
