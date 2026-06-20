@@ -11,9 +11,29 @@ const { createBaseMessage } = require('./helpers');
 function runTests() {
   testUnauthorizedUsersAreRejected();
   testAuthorizedUserListIsAccepted();
+  testMessageDateIsCopiedToAttachments();
   testUnsupportedAttachmentsAreIgnored();
   testDeduplicationUsesFileUniqueId();
   testSmallAndLargeFileBoundaryUses20MbLimit();
+}
+
+function testMessageDateIsCopiedToAttachments() {
+  const message = createBaseMessage({
+    date: 1778880600,
+    document: {
+      file_id: 'doc-1',
+      file_unique_id: 'uniq-doc-1',
+      file_name: 'report.pdf',
+      file_size: 1024
+    }
+  });
+
+  const result = processIncomingMessage(message, {
+    authorizedUserId: 42,
+    knownDeduplicationKeys: new Set()
+  });
+
+  assert.strictEqual(result.attachments[0].message_date, 1778880600);
 }
 
 function testAuthorizedUserListIsAccepted() {

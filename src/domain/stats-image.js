@@ -182,7 +182,7 @@ function buildSegments(items) {
 }
 
 function text(x, y, value, fontSize, fontWeight, fill) {
-  return '<text x="' + x + '" y="' + y + '" font-family="Arial, Helvetica, sans-serif" font-size="' + fontSize + '" font-weight="' + fontWeight + '" fill="' + fill + '">' + escapeXml(value) + '</text>';
+  return '<text x="' + x + '" y="' + y + '" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="' + fontSize + '" font-weight="' + fontWeight + '" fill="' + fill + '">' + escapeXml(value) + '</text>';
 }
 
 function formatInteger(value) {

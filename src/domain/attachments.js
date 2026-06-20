@@ -37,6 +37,7 @@ function normalizeAttachment(kind, rawAttachment, message) {
     mime_type: rawAttachment.mime_type || null,
     file_size: normalizeOptionalNumber(rawAttachment.file_size),
     message_id: message.message_id || null,
+    message_date: normalizeOptionalNumber(message.date),
     media_group_id: message.media_group_id || null,
     chat_id: message.chat && message.chat.id ? message.chat.id : null,
     user_id: message.from && message.from.id ? message.from.id : null

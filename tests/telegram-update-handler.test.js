@@ -1425,6 +1425,7 @@ function createMockDependencies(options) {
     mediaGroupResponseDelayMs: normalizedOptions.mediaGroupResponseDelayMs,
     setTimeoutFn: normalizedOptions.setTimeoutFn,
     clearTimeoutFn: normalizedOptions.clearTimeoutFn,
+    logger: normalizedOptions.logger || { error() {} },
     now: () => '2026-05-16T10:00:00.000Z'
   };
 

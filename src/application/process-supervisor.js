@@ -49,8 +49,9 @@ function createRestartingProcessSupervisor(options) {
   function startChild() {
     logger.log(`Starting bot process: ${[command].concat(args).join(' ')}`);
     child = spawnProcess(command, args, {
-      stdio: 'inherit'
+      stdio: ['ignore', 'pipe', 'pipe']
     });
+    pipeChildOutput(child, logger);
 
     let handledExit = false;
 
@@ -85,6 +86,27 @@ function createRestartingProcessSupervisor(options) {
   }
 }
 
+function pipeChildOutput(child, logger) {
+  if (child.stdout && typeof child.stdout.on === 'function') {
+    child.stdout.on('data', (chunk) => {
+      writeLines(chunk, (line) => logger.log(`[bot] ${line}`));
+    });
+  }
+
+  if (child.stderr && typeof child.stderr.on === 'function') {
+    child.stderr.on('data', (chunk) => {
+      writeLines(chunk, (line) => logger.error(`[bot] ${line}`));
+    });
+  }
+}
+
+function writeLines(chunk, writeLine) {
+  String(chunk)
+    .split(/\r?\n/)
+    .filter((line) => line.length > 0)
+    .forEach(writeLine);
+}
+
 function formatExitReason(code, signal) {
   if (signal) {
     return `signal ${signal}`;
@@ -95,5 +117,6 @@ function formatExitReason(code, signal) {
 
 module.exports = {
   createRestartingProcessSupervisor,
-  formatExitReason
+  formatExitReason,
+  pipeChildOutput
 };

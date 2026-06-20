@@ -102,11 +102,43 @@ npm test
 docker build -t telegram-file-bot:stage1 .
 ```
 
-Запустить контейнер:
+Запустить контейнер для реальной работы:
 
 ```bash
-docker run --rm telegram-file-bot:stage1
+docker run -d \
+  --name telegram-file-bot \
+  --restart unless-stopped \
+  --env-file .env \
+  -e NODE_ENV=production \
+  -e DOWNLOADS_DIR=/downloads \
+  -e SQLITE_DB_PATH=/data/bot.sqlite \
+  -v "$(pwd)/storage/data:/data" \
+  -v "$(pwd)/storage/downloads:/downloads" \
+  telegram-file-bot:stage1
 ```
+
+Или через Compose:
+
+```bash
+docker compose up -d --build
+```
+
+Для Unraid создайте контейнер из образа `telegram-file-bot:stage1` или используйте этот `docker-compose.yml`.
+
+Минимальные переменные:
+
+- `TELEGRAM_BOT_TOKEN` — реальный токен от BotFather.
+- `AUTHORIZED_USER_IDS` — Telegram user id через запятую, например `123456789,987654321`.
+- `SMALL_FILE_LIMIT_BYTES` — опционально, по умолчанию `20971520`.
+
+Рекомендуемые volume mappings для Unraid:
+
+- `/mnt/user/appdata/telegram-file-bot/data` -> `/data`
+- `/mnt/user/downloads/telegram-file-bot` -> `/downloads`
+
+Новые файлы, которые бот скачивает автоматически, сохраняются в дневные подпапки внутри `/downloads`, например `/downloads/2026-05-16/report.pdf`. Дата папки берётся из даты Telegram-сообщения в часовом поясе Europe/Moscow.
+
+Порт публиковать не нужно: бот работает через исходящие long polling запросы к Telegram Bot API.
 
 ## Структура
 

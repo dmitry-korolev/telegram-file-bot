@@ -24,28 +24,34 @@ function createTelegramPollingLoop(options) {
   };
 
   async function start() {
-    logger.log('Telegram polling started.');
+    logger.log('telegram polling started', { timeoutSeconds });
 
     while (!stopped) {
       try {
+        logger.log('requesting telegram updates', { offset, timeoutSeconds });
         const updates = await telegramClient.getUpdates({
           offset,
           timeout: timeoutSeconds,
           allowed_updates: ['message', 'callback_query']
         });
+        logger.log('telegram updates received', { offset, updateCount: updates.length });
 
         for (const update of updates) {
           try {
+            logger.log('processing update', {
+              updateId: update.update_id,
+              updateType: update.callback_query ? 'callback_query' : update.message ? 'message' : 'unknown'
+            });
             const result = await updateHandler.handleUpdate(update);
             logResult(update, result);
             offset = update.update_id + 1;
           } catch (error) {
-            logger.error(`Update ${update.update_id} failed: ${error.message}`);
+            logger.error('update failed', { updateId: update.update_id, error });
             break;
           }
         }
       } catch (error) {
-        logger.error(`Polling error: ${error.message}`);
+        logger.error('telegram polling request failed', { offset, error });
         await delay(retryDelayMs);
       }
     }
@@ -56,7 +62,7 @@ function createTelegramPollingLoop(options) {
   }
 
   function logResult(update, result) {
-    logger.log(JSON.stringify({
+    logger.log('update processed', {
       updateId: update.update_id,
       accepted: result.accepted,
       reason: result.reason,
@@ -66,7 +72,7 @@ function createTelegramPollingLoop(options) {
       })),
       deleteMessageCalled: result.deleteMessageCalled,
       sendMessageCalled: result.sendMessageCalled
-    }));
+    });
   }
 }
 

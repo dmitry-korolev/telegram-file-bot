@@ -13,6 +13,7 @@ async function runTests() {
   testSanitizeFileNameRejectsDirectoryTraversalNames();
   await testDownloadUsesOriginalFileName();
   await testDownloadAddsFileUniqueIdWhenOriginalNameExists();
+  await testDownloadUsesCurrentDateWhenMessageDateIsMissing();
 }
 
 function testSanitizeFileNameKeepsSafeCharacters() {
@@ -38,17 +39,20 @@ async function testDownloadUsesOriginalFileName() {
     const result = await downloader.download({
       file_id: 'file-1',
       file_unique_id: 'unique-1',
-      file_name: 'report.pdf'
+      file_name: 'report.pdf',
+      message_date: Date.parse('2026-05-15T21:30:00.000Z') / 1000
     });
 
-    assert.strictEqual(result.localPath, path.resolve(downloadsDir, 'report.pdf'));
-    assert.strictEqual(downloads[0].destinationPath, path.resolve(downloadsDir, 'report.pdf'));
+    assert.strictEqual(result.localPath, path.resolve(downloadsDir, '2026-05-16', 'report.pdf'));
+    assert.strictEqual(downloads[0].destinationPath, path.resolve(downloadsDir, '2026-05-16', 'report.pdf'));
   });
 }
 
 async function testDownloadAddsFileUniqueIdWhenOriginalNameExists() {
   await withDownloadsDir(async (downloadsDir) => {
-    const existingPath = path.resolve(downloadsDir, 'report.pdf');
+    const dateDirectory = path.resolve(downloadsDir, '2026-05-16');
+    fs.mkdirSync(dateDirectory, { recursive: true });
+    const existingPath = path.resolve(dateDirectory, 'report.pdf');
     fs.writeFileSync(existingPath, 'existing');
 
     const downloads = [];
@@ -60,11 +64,32 @@ async function testDownloadAddsFileUniqueIdWhenOriginalNameExists() {
     const result = await downloader.download({
       file_id: 'file-1',
       file_unique_id: 'unique-1',
+      file_name: 'report.pdf',
+      message_date: Date.parse('2026-05-15T21:30:00.000Z') / 1000
+    });
+
+    assert.strictEqual(result.localPath, path.resolve(downloadsDir, '2026-05-16', 'report-unique-1.pdf'));
+    assert.strictEqual(downloads[0].destinationPath, path.resolve(downloadsDir, '2026-05-16', 'report-unique-1.pdf'));
+  });
+}
+
+async function testDownloadUsesCurrentDateWhenMessageDateIsMissing() {
+  await withDownloadsDir(async (downloadsDir) => {
+    const downloads = [];
+    const downloader = createTelegramFileDownloader({
+      downloadsDir,
+      telegramClient: createMockTelegramClient(downloads),
+      now: () => new Date('2026-05-16T21:30:00.000Z')
+    });
+
+    const result = await downloader.download({
+      file_id: 'file-1',
+      file_unique_id: 'unique-1',
       file_name: 'report.pdf'
     });
 
-    assert.strictEqual(result.localPath, path.resolve(downloadsDir, 'report-unique-1.pdf'));
-    assert.strictEqual(downloads[0].destinationPath, path.resolve(downloadsDir, 'report-unique-1.pdf'));
+    assert.strictEqual(result.localPath, path.resolve(downloadsDir, '2026-05-17', 'report.pdf'));
+    assert.strictEqual(downloads[0].destinationPath, path.resolve(downloadsDir, '2026-05-17', 'report.pdf'));
   });
 }
 

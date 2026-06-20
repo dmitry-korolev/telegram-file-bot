@@ -10,6 +10,7 @@ function createTelegramClient(options) {
     ? options.minRequestIntervalMs
     : 0;
   const requestFn = options && options.requestFn ? options.requestFn : https.request;
+  const logger = options && options.logger ? options.logger : createSilentLogger();
   let nextRequestAt = 0;
 
   if (!token || token === 'fake-token' || token === 'replace-me-with-a-fake-token-for-local-dev') {
@@ -110,35 +111,76 @@ function createTelegramClient(options) {
 
   async function downloadFile(filePath, destinationPath) {
     await fs.promises.mkdir(path.dirname(destinationPath), { recursive: true });
+    const startedAt = Date.now();
+    logger.log('telegram file download started', {
+      filePath,
+      destinationPath
+    });
 
     return new Promise((resolve, reject) => {
       const file = fs.createWriteStream(destinationPath);
       const request = https.get(createFileUrl(filePath), (response) => {
         if (response.statusCode < 200 || response.statusCode >= 300) {
           file.destroy();
-          reject(new Error(`Telegram file download failed with HTTP ${response.statusCode}`));
+          const error = new Error(`Telegram file download failed with HTTP ${response.statusCode}`);
+          logger.error('telegram file download failed', {
+            filePath,
+            destinationPath,
+            statusCode: response.statusCode,
+            durationMs: Date.now() - startedAt,
+            error
+          });
+          reject(error);
           return;
         }
 
+        logger.log('telegram file download response received', {
+          filePath,
+          statusCode: response.statusCode,
+          contentLength: response.headers && response.headers['content-length'] ? Number(response.headers['content-length']) : null
+        });
         response.pipe(file);
       });
 
       request.on('error', (error) => {
         file.destroy();
+        logger.error('telegram file download request failed', {
+          filePath,
+          destinationPath,
+          durationMs: Date.now() - startedAt,
+          error
+        });
         reject(error);
       });
 
       file.on('finish', () => {
-        file.close(() => resolve(destinationPath));
+        file.close(() => {
+          logger.log('telegram file download finished', {
+            filePath,
+            destinationPath,
+            durationMs: Date.now() - startedAt
+          });
+          resolve(destinationPath);
+        });
       });
 
-      file.on('error', reject);
+      file.on('error', (error) => {
+        logger.error('telegram file write failed', {
+          filePath,
+          destinationPath,
+          durationMs: Date.now() - startedAt,
+          error
+        });
+        reject(error);
+      });
     });
   }
 
   async function callApi(method, params) {
     await waitForRequestSlot();
     const body = JSON.stringify(params || {});
+    const startedAt = Date.now();
+    logger.log('telegram api request started', buildApiLogFields(method, params));
 
     return new Promise((resolve, reject) => {
       const request = requestFn(createApiRequestOptions(method, body), (response) => {
@@ -159,15 +201,40 @@ function createTelegramClient(options) {
           }
 
           if (!parsed.ok) {
-            reject(new Error(`Telegram API ${method} failed: ${parsed.description || 'unknown error'}`));
+            const error = new Error(`Telegram API ${method} failed: ${parsed.description || 'unknown error'}`);
+            logger.error('telegram api request failed', Object.assign(
+              buildApiLogFields(method, params),
+              {
+                durationMs: Date.now() - startedAt,
+                statusCode: response.statusCode,
+                error
+              }
+            ));
+            reject(error);
             return;
           }
 
+          logger.log('telegram api request finished', Object.assign(
+            buildApiLogFields(method, params),
+            {
+              durationMs: Date.now() - startedAt,
+              statusCode: response.statusCode
+            }
+          ));
           resolve(parsed.result);
         });
       });
 
-      request.on('error', reject);
+      request.on('error', (error) => {
+        logger.error('telegram api request error', Object.assign(
+          buildApiLogFields(method, params),
+          {
+            durationMs: Date.now() - startedAt,
+            error
+          }
+        ));
+        reject(error);
+      });
       request.write(body);
       request.end();
     });
@@ -177,6 +244,11 @@ function createTelegramClient(options) {
     await waitForRequestSlot();
     const boundary = `telegram-file-bot-${Date.now().toString(16)}`;
     const body = buildMultipartBody(boundary, params, file);
+    const startedAt = Date.now();
+    logger.log('telegram multipart api request started', Object.assign(
+      buildApiLogFields(method, params),
+      buildFileLogFields(file)
+    ));
 
     return new Promise((resolve, reject) => {
       const request = requestFn(createMultipartRequestOptions(method, body, boundary), (response) => {
@@ -197,15 +269,43 @@ function createTelegramClient(options) {
           }
 
           if (!parsed.ok) {
-            reject(new Error(`Telegram API ${method} failed: ${parsed.description || 'unknown error'}`));
+            const error = new Error(`Telegram API ${method} failed: ${parsed.description || 'unknown error'}`);
+            logger.error('telegram multipart api request failed', Object.assign(
+              buildApiLogFields(method, params),
+              buildFileLogFields(file),
+              {
+                durationMs: Date.now() - startedAt,
+                statusCode: response.statusCode,
+                error
+              }
+            ));
+            reject(error);
             return;
           }
 
+          logger.log('telegram multipart api request finished', Object.assign(
+            buildApiLogFields(method, params),
+            buildFileLogFields(file),
+            {
+              durationMs: Date.now() - startedAt,
+              statusCode: response.statusCode
+            }
+          ));
           resolve(parsed.result);
         });
       });
 
-      request.on('error', reject);
+      request.on('error', (error) => {
+        logger.error('telegram multipart api request error', Object.assign(
+          buildApiLogFields(method, params),
+          buildFileLogFields(file),
+          {
+            durationMs: Date.now() - startedAt,
+            error
+          }
+        ));
+        reject(error);
+      });
       request.write(body);
       request.end();
     });
@@ -252,6 +352,36 @@ function createTelegramClient(options) {
   function createFileUrl(filePath) {
     return `https://api.telegram.org/file/bot${token}/${filePath}`;
   }
+}
+
+function buildApiLogFields(method, params) {
+  const normalizedParams = params || {};
+
+  return {
+    method,
+    chatId: normalizedParams.chat_id,
+    messageId: normalizedParams.message_id,
+    fileId: normalizedParams.file_id || normalizedParams.photo || normalizedParams.video || normalizedParams.document,
+    callbackQueryId: normalizedParams.callback_query_id,
+    timeout: normalizedParams.timeout,
+    offset: normalizedParams.offset
+  };
+}
+
+function buildFileLogFields(file) {
+  return {
+    uploadField: file && file.fieldName,
+    filename: file && file.filename,
+    contentType: file && file.contentType,
+    bytes: file && file.buffer ? file.buffer.length : null
+  };
+}
+
+function createSilentLogger() {
+  return {
+    log() {},
+    error() {}
+  };
 }
 
 function buildMultipartBody(boundary, params, file) {

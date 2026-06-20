@@ -2,14 +2,24 @@ FROM node:20-alpine
 
 WORKDIR /app
 
+RUN apk add --no-cache sqlite font-dejavu
+
 COPY package.json package-lock.json ./
-RUN apk add --no-cache sqlite
-RUN npm ci
+RUN npm ci --omit=dev
 
 COPY src ./src
-COPY tests ./tests
 COPY README.md ./
-COPY AGENTS.md ./
 COPY .env.example ./
 
-CMD ["npm", "test"]
+ENV NODE_ENV=production
+ENV DOWNLOADS_DIR=/storage/downloads
+ENV SQLITE_DB_PATH=/storage/bot.sqlite
+ENV XDG_CACHE_HOME=/tmp/.cache
+
+RUN mkdir -p /storage/downloads /tmp/.cache/fontconfig && \
+  chmod -R 1777 /tmp/.cache && \
+  chown -R node:node /app /storage
+
+USER node
+
+CMD ["npm", "start"]

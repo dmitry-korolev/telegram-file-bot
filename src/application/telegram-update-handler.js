@@ -81,6 +81,7 @@ function createTelegramUpdateHandler(dependencies) {
     deps.mediaGroupResponseDelayMs,
     DEFAULT_MEDIA_GROUP_RESPONSE_DELAY_MS
   );
+  const logger = normalizeLogger(deps.logger || console);
   const setTimeoutFn = deps.setTimeoutFn || setTimeout;
   const clearTimeoutFn = deps.clearTimeoutFn || clearTimeout;
   const mediaGroupResponses = new Map();
@@ -92,6 +93,11 @@ function createTelegramUpdateHandler(dependencies) {
   };
 
   async function handleUpdate(update) {
+    logger.log('update handling started', {
+      updateId: update && update.update_id,
+      updateType: update && update.callback_query ? 'callback_query' : update && update.message ? 'message' : 'unknown'
+    });
+
     if (update && update.callback_query) {
       return handleCallbackQuery(update.callback_query);
     }
@@ -116,6 +122,13 @@ function createTelegramUpdateHandler(dependencies) {
     });
 
     if (!processedMessage.accepted) {
+      logger.log('message rejected', {
+        updateId: update && update.update_id,
+        reason: processedMessage.reason,
+        chatId: message.chat && message.chat.id,
+        messageId: message.message_id
+      });
+
       return {
         accepted: false,
         reason: processedMessage.reason,
@@ -128,6 +141,14 @@ function createTelegramUpdateHandler(dependencies) {
     if (processedMessage.attachments.length === 0) {
       return handleMessageWithoutSupportedAttachments(message);
     }
+
+    logger.log('supported attachments found', {
+      updateId: update && update.update_id,
+      chatId: message.chat && message.chat.id,
+      messageId: message.message_id,
+      attachmentCount: processedMessage.attachments.length,
+      mediaGroupId: message.media_group_id || null
+    });
 
     const files = [];
 
@@ -142,12 +163,21 @@ function createTelegramUpdateHandler(dependencies) {
       deleteMessageCalled = true;
 
       try {
+        logger.log('deleting source telegram message', {
+          chatId: message.chat && message.chat.id,
+          messageId: message.message_id
+        });
         await deps.messageDeleter.deleteMessage({
           chatId: message.chat && message.chat.id,
           messageId: message.message_id
         });
       } catch (error) {
         deleteMessageError = error;
+        logger.error('source telegram message delete failed', {
+          chatId: message.chat && message.chat.id,
+          messageId: message.message_id,
+          error
+        });
       }
     }
 
@@ -179,12 +209,21 @@ function createTelegramUpdateHandler(dependencies) {
       sendMessageCalled = true;
 
       try {
+        logger.log('sending processing response', {
+          chatId: message.chat && message.chat.id,
+          fileCount: files.length
+        });
         await deps.messageSender.sendMessage({
           chatId: message.chat && message.chat.id,
           text: responseText
         });
       } catch (error) {
         sendMessageError = error;
+        logger.error('processing response send failed', {
+          chatId: message.chat && message.chat.id,
+          fileCount: files.length,
+          error
+        });
       }
     }
 
@@ -1018,6 +1057,8 @@ function createTelegramUpdateHandler(dependencies) {
     try {
       downloaded = await deps.downloader.download(attachment);
     } catch (error) {
+      logDownloadFailure(attachment, error);
+
       const record = await deps.fileRepository.create(buildRecord(attachment, {
         status: 'download_failed',
         error_code: 'download_failed',
@@ -1174,11 +1215,29 @@ function createTelegramUpdateHandler(dependencies) {
 
     buffer.timeoutId = setTimeoutFn(() => {
       flushMediaGroupResponse(mediaGroupId).catch((error) => {
-        console.error(error.stack || error.message || String(error));
+        logger.error('media group response flush failed', { mediaGroupId, error });
       });
     }, mediaGroupResponseDelayMs);
 
+    logger.log('media group response scheduled', {
+      mediaGroupId,
+      chatId: buffer.chatId,
+      fileCount: buffer.files.length,
+      delayMs: mediaGroupResponseDelayMs
+    });
     mediaGroupResponses.set(mediaGroupId, buffer);
+  }
+
+  function logDownloadFailure(attachment, error) {
+    const payload = {
+      fileId: attachment && attachment.file_id,
+      fileUniqueId: attachment && attachment.file_unique_id,
+      fileKind: attachment && attachment.file_kind,
+      errorMessage: getErrorMessage(error),
+      error
+    };
+
+    logger.error('telegram file download failed', payload);
   }
 
   async function flushMediaGroupResponse(mediaGroupId) {
@@ -1257,6 +1316,14 @@ function getErrorMessage(error) {
   return error && error.message ? error.message : String(error || 'unknown_error');
 }
 
+function normalizeLogger(logger) {
+  return {
+    log: typeof logger.log === 'function' ? logger.log.bind(logger) : () => {},
+    error: typeof logger.error === 'function' ? logger.error.bind(logger) : () => {},
+    warn: typeof logger.warn === 'function' ? logger.warn.bind(logger) : () => {}
+  };
+}
+
 module.exports = {
   createTelegramUpdateHandler,
   extractMessage,
@@ -1269,5 +1336,6 @@ module.exports = {
   CALLBACK_SHOW_LARGEST_ARCHIVE_FILES,
   CALLBACK_SHOW_SMALLEST_ARCHIVE_FILES,
   CALLBACK_CONFIRM_CLEAR_QUEUE,
-  CALLBACK_CANCEL_CLEAR_QUEUE
+  CALLBACK_CANCEL_CLEAR_QUEUE,
+  normalizeLogger
 };

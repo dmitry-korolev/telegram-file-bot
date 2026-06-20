@@ -1,0 +1,18 @@
+services:
+  telegram-file-bot:
+    build: .
+    image: telegram-file-bot:stage1
+    container_name: telegram-file-bot
+    network_mode: "container:sing-box"
+    user: "${PUID:-0}:${PGID:-0}"
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      DOWNLOADS_DIR: /storage/downloads
+      SQLITE_DB_PATH: /storage/bot.sqlite
+    volumes:
+      - ./storage:/storage
+      - ${HOST_DOWNLOADS_DIR:-/mnt/user/downloads/telegram-file-bot}:/storage/downloads
+      

@@ -66,6 +66,7 @@ function testBuildStatsImageSvgRendersCoreSections() {
   }));
 
   assert.strictEqual(svg.includes('<svg'), true);
+  assert.strictEqual(svg.includes('DejaVu Sans'), true);
   assert.strictEqual(svg.includes('Статистика бота'), true);
   assert.strictEqual(svg.includes('Распределение по размеру'), true);
   assert.strictEqual(svg.includes('1000+ MB'), true);

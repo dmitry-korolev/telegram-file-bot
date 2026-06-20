@@ -12,29 +12,43 @@ const { createTelegramUserFilesRepository } = require('./adapters/sqlite/telegra
 const { createTelegramClient } = require('./adapters/telegram/client');
 const { createTelegramFileDownloader } = require('./adapters/telegram/file-downloader');
 const { createStatsImageRenderer } = require('./application/stats-image-renderer');
+const { createLogger } = require('./application/logger');
 const { BOT_COMMANDS, BOT_COMMAND_SCOPE_PRIVATE_CHATS } = require('./domain/bot-commands');
 
 async function main() {
+  const logger = createLogger({ component: 'bot' });
   loadEnvFile();
   const config = createConfig(process.env);
 
+  logger.info('runtime config loaded', {
+    nodeEnv: config.nodeEnv,
+    authorizedUserIds: config.authorizedUserIds,
+    downloadsDir: config.downloadsDir,
+    sqliteDbPath: config.sqliteDbPath,
+    smallFileLimitBytes: config.smallFileLimitBytes,
+    telegramPollingTimeoutSeconds: config.telegramPollingTimeoutSeconds,
+    telegramApiMinRequestIntervalMs: config.telegramApiMinRequestIntervalMs,
+    mediaGroupResponseDelayMs: config.mediaGroupResponseDelayMs
+  });
+
   validateRuntimeConfig(config);
-  ensureRuntimeDirectories(config);
+  ensureRuntimeDirectories(config, logger);
 
   const sqliteClient = createSqliteClient(path.resolve(config.sqliteDbPath));
   const fileRepository = createTelegramUserFilesRepository(sqliteClient);
+  logger.info('initializing sqlite schema', { sqliteDbPath: path.resolve(config.sqliteDbPath) });
   fileRepository.initializeSchema();
 
   const telegramClient = createTelegramClient({
     token: config.telegramBotToken,
-    minRequestIntervalMs: config.telegramApiMinRequestIntervalMs
+    minRequestIntervalMs: config.telegramApiMinRequestIntervalMs,
+    logger
   });
-  await telegramClient.setMyCommands(BOT_COMMANDS, {
-    scope: BOT_COMMAND_SCOPE_PRIVATE_CHATS
-  });
+  await registerBotCommands(telegramClient, logger);
   const downloader = createTelegramFileDownloader({
     telegramClient,
-    downloadsDir: config.downloadsDir
+    downloadsDir: config.downloadsDir,
+    logger
   });
   const statsImageRenderer = createStatsImageRenderer();
   const updateHandler = createTelegramUpdateHandler({
@@ -48,31 +62,17 @@ async function main() {
     statsImageRenderer,
     callbackResponder: telegramClient,
     nextQueuePosition: () => fileRepository.getNextQueuePosition(),
-    mediaGroupResponseDelayMs: config.mediaGroupResponseDelayMs
+    mediaGroupResponseDelayMs: config.mediaGroupResponseDelayMs,
+    logger
   });
   const pollingLoop = createTelegramPollingLoop({
     telegramClient,
     updateHandler,
-    timeoutSeconds: config.telegramPollingTimeoutSeconds
+    timeoutSeconds: config.telegramPollingTimeoutSeconds,
+    logger
   });
 
-  console.log('Telegram file bot is starting.');
-  console.log(
-    JSON.stringify(
-      {
-        nodeEnv: config.nodeEnv,
-        authorizedUserIds: config.authorizedUserIds,
-        downloadsDir: config.downloadsDir,
-        sqliteDbPath: config.sqliteDbPath,
-        smallFileLimitBytes: config.smallFileLimitBytes,
-        telegramPollingTimeoutSeconds: config.telegramPollingTimeoutSeconds,
-        telegramApiMinRequestIntervalMs: config.telegramApiMinRequestIntervalMs,
-        mediaGroupResponseDelayMs: config.mediaGroupResponseDelayMs
-      },
-      null,
-      2
-    )
-  );
+  logger.info('telegram file bot is starting');
 
   await pollingLoop.start();
 }
@@ -87,14 +87,41 @@ function validateRuntimeConfig(config) {
   }
 }
 
-function ensureRuntimeDirectories(config) {
-  fs.mkdirSync(path.resolve(config.downloadsDir), { recursive: true });
-  fs.mkdirSync(path.dirname(path.resolve(config.sqliteDbPath)), { recursive: true });
+function ensureRuntimeDirectories(config, logger) {
+  const downloadsDir = path.resolve(config.downloadsDir);
+  const sqliteDir = path.dirname(path.resolve(config.sqliteDbPath));
+
+  fs.mkdirSync(downloadsDir, { recursive: true });
+  fs.mkdirSync(sqliteDir, { recursive: true });
+  warnIfDirectoryNotWritable(downloadsDir, 'DOWNLOADS_DIR', logger);
+  warnIfDirectoryNotWritable(sqliteDir, 'SQLITE_DB_PATH directory', logger);
+}
+
+async function registerBotCommands(telegramClient, logger) {
+  try {
+    await telegramClient.setMyCommands(BOT_COMMANDS, {
+      scope: BOT_COMMAND_SCOPE_PRIVATE_CHATS
+    });
+  } catch (error) {
+    const normalizedLogger = logger || console;
+    if (typeof normalizedLogger.error === 'function') {
+      normalizedLogger.error('bot command registration failed', { error });
+    }
+  }
+}
+
+function warnIfDirectoryNotWritable(directoryPath, label, logger) {
+  try {
+    fs.accessSync(directoryPath, fs.constants.W_OK);
+  } catch (error) {
+    const normalizedLogger = logger || console;
+    normalizedLogger.warn(`${label} is not writable`, { path: directoryPath, error });
+  }
 }
 
 if (require.main === module) {
   main().catch((error) => {
-    console.error(error.message);
+    createLogger({ component: 'bot' }).error('fatal startup error', { error });
     process.exitCode = 1;
   });
 }
@@ -102,5 +129,7 @@ if (require.main === module) {
 module.exports = {
   main,
   validateRuntimeConfig,
-  ensureRuntimeDirectories
+  ensureRuntimeDirectories,
+  registerBotCommands,
+  warnIfDirectoryNotWritable
 };
