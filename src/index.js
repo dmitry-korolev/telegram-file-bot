@@ -11,6 +11,7 @@ const { createSqliteClient } = require('./adapters/sqlite/sqlite-client');
 const { createTelegramUserFilesRepository } = require('./adapters/sqlite/telegram-user-files-repository');
 const { createTelegramClient } = require('./adapters/telegram/client');
 const { createTelegramFileDownloader } = require('./adapters/telegram/file-downloader');
+const { createQueuedTelegramSender } = require('./adapters/telegram/queued-sender');
 const { createStatsImageRenderer } = require('./application/stats-image-renderer');
 const { createLogger } = require('./application/logger');
 const { BOT_COMMANDS, BOT_COMMAND_SCOPE_PRIVATE_CHATS } = require('./domain/bot-commands');
@@ -27,7 +28,8 @@ async function main() {
     sqliteDbPath: config.sqliteDbPath,
     smallFileLimitBytes: config.smallFileLimitBytes,
     telegramPollingTimeoutSeconds: config.telegramPollingTimeoutSeconds,
-    telegramApiMinRequestIntervalMs: config.telegramApiMinRequestIntervalMs
+    telegramApiMinRequestIntervalMs: config.telegramApiMinRequestIntervalMs,
+    telegramOutgoingMessageIntervalMs: config.telegramOutgoingMessageIntervalMs
   });
 
   validateRuntimeConfig(config);
@@ -44,6 +46,11 @@ async function main() {
     logger
   });
   await registerBotCommands(telegramClient, logger);
+  const queuedTelegramSender = createQueuedTelegramSender({
+    sender: telegramClient,
+    intervalMs: config.telegramOutgoingMessageIntervalMs,
+    logger
+  });
   const downloader = createTelegramFileDownloader({
     telegramClient,
     downloadsDir: config.downloadsDir,
@@ -56,8 +63,8 @@ async function main() {
     fileRepository,
     downloader,
     messageDeleter: telegramClient,
-    messageSender: telegramClient,
-    fileSender: telegramClient,
+    messageSender: queuedTelegramSender,
+    fileSender: queuedTelegramSender,
     statsImageRenderer,
     callbackResponder: telegramClient,
     nextQueuePosition: () => fileRepository.getNextQueuePosition(),

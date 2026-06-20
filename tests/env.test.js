@@ -9,6 +9,7 @@ function runTests() {
   testParseEnvReadsSimpleValues();
   testParseEnvUnquotesValues();
   testConfigParsesAuthorizedUserIds();
+  testConfigParsesOutgoingMessageInterval();
 }
 
 function testParseEnvReadsSimpleValues() {
@@ -30,6 +31,16 @@ function testConfigParsesAuthorizedUserIds() {
   });
 
   assert.deepStrictEqual(config.authorizedUserIds, [42, 77, 88]);
+}
+
+function testConfigParsesOutgoingMessageInterval() {
+  const defaults = createConfig({});
+  const configured = createConfig({
+    TELEGRAM_OUTGOING_MESSAGE_INTERVAL_MS: '750'
+  });
+
+  assert.strictEqual(defaults.telegramOutgoingMessageIntervalMs, 500);
+  assert.strictEqual(configured.telegramOutgoingMessageIntervalMs, 750);
 }
 
 function testParseEnvUnquotesValues() {

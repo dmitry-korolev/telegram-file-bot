@@ -1193,20 +1193,24 @@ function createTelegramUpdateHandler(dependencies) {
     const responseTexts = (files || [])
       .map((file) => buildSingleFileResponse(file))
       .filter(Boolean);
-    let sendMessageError = null;
 
     for (const responseText of responseTexts) {
+      logger.log('queueing processing response', {
+        chatId: message.chat && message.chat.id,
+        fileCount: 1
+      });
       try {
-        logger.log('sending processing response', {
-          chatId: message.chat && message.chat.id,
-          fileCount: 1
-        });
-        await deps.messageSender.sendMessage({
+        Promise.resolve(deps.messageSender.sendMessage({
           chatId: message.chat && message.chat.id,
           text: responseText
+        })).catch((error) => {
+          logger.error('processing response send failed', {
+            chatId: message.chat && message.chat.id,
+            fileCount: 1,
+            error
+          });
         });
       } catch (error) {
-        sendMessageError = error;
         logger.error('processing response send failed', {
           chatId: message.chat && message.chat.id,
           fileCount: 1,
@@ -1217,7 +1221,7 @@ function createTelegramUpdateHandler(dependencies) {
 
     return {
       sendMessageCalled: responseTexts.length > 0,
-      sendMessageError,
+      sendMessageError: null,
       responseText: responseTexts[0] || null,
       responseTexts
     };

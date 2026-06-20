@@ -18,7 +18,7 @@ With a real `TELEGRAM_BOT_TOKEN`, `npm start` runs long polling against Telegram
 
 On startup, the bot also syncs its Telegram command menu with the supported commands.
 
-For bursty uploads, the bot processes updates sequentially and advances the Telegram update offset only after an update is handled successfully. Telegram API calls are throttled by `TELEGRAM_API_MIN_REQUEST_INTERVAL_MS`.
+For bursty uploads, the bot processes updates sequentially and advances the Telegram update offset only after an update is handled successfully. Telegram API calls are throttled by `TELEGRAM_API_MIN_REQUEST_INTERVAL_MS`. User-visible outgoing messages and media are additionally sent through one shared queue controlled by `TELEGRAM_OUTGOING_MESSAGE_INTERVAL_MS`.
 
 For Telegram media groups, file processing and responses start immediately for every update. The bot sends a separate message for each processed file.
 

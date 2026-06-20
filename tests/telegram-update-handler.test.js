@@ -28,6 +28,8 @@ async function runTests() {
   await testCommandMessageWithoutAttachmentsIsNotDeleted();
   await testProcessingSendsSingleFileResponse();
   await testProcessingSendsSeparateFileResponses();
+  await testProcessingResponseDoesNotWaitForQueuedSend();
+  await testProcessingResponseLogsAsyncSendFailure();
   await testDeleteMessageFailureIsRecordedWithoutStatusOverwrite();
   await testMediaGroupSendsImmediateFileResponses();
   await testSeparateMediaGroupsSendImmediateResponses();
@@ -404,6 +406,54 @@ async function testProcessingSendsSeparateFileResponses() {
     ]
   );
   assert.deepStrictEqual(result.responseTexts, deps.messageSender.calls.map((call) => call.text));
+}
+
+async function testProcessingResponseDoesNotWaitForQueuedSend() {
+  const deps = createMockDependencies({
+    blockSendMessage: true
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 56,
+    message: createMessage({
+      document: createTelegramFile('doc-small', 'uniq-doc-small-nonblocking', 1024)
+    })
+  });
+
+  assert.strictEqual(result.sendMessageCalled, true);
+  assert.strictEqual(result.sendMessageError, null);
+  assert.strictEqual(deps.messageSender.calls.length, 1);
+  assert.strictEqual(deps.pendingMessageSends.length, 1);
+
+  deps.pendingMessageSends[0].resolve({ message_id: 9001 });
+  await flushMicrotasks();
+}
+
+async function testProcessingResponseLogsAsyncSendFailure() {
+  const errors = [];
+  const deps = createMockDependencies({
+    failSendMessage: true,
+    logger: {
+      error(message, fields) {
+        errors.push({ message, fields });
+      }
+    }
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 57,
+    message: createMessage({
+      document: createTelegramFile('doc-small', 'uniq-doc-small-send-failed', 1024)
+    })
+  });
+
+  await flushMicrotasks();
+
+  assert.strictEqual(result.sendMessageCalled, true);
+  assert.strictEqual(result.sendMessageError, null);
+  assert.strictEqual(errors.some((entry) => entry.message === 'processing response send failed'), true);
 }
 
 async function testDeleteMessageFailureIsRecordedWithoutStatusOverwrite() {
@@ -977,6 +1027,7 @@ function createMockDependencies(options) {
   const failingFileIds = new Set(normalizedOptions.failingFileIds || []);
   const failingDownloadFileIds = new Set(normalizedOptions.failingDownloadFileIds || []);
   let queuePosition = 0;
+  const pendingMessageSends = [];
 
   const fileRepository = {
     records: [],
@@ -1374,6 +1425,16 @@ function createMockDependencies(options) {
     calls: [],
     async sendMessage(payload) {
       this.calls.push(payload);
+
+      if (normalizedOptions.failSendMessage) {
+        throw new Error('Cannot send message');
+      }
+
+      if (normalizedOptions.blockSendMessage) {
+        return new Promise((resolve, reject) => {
+          pendingMessageSends.push({ resolve, reject });
+        });
+      }
     }
   };
 
@@ -1421,6 +1482,7 @@ function createMockDependencies(options) {
     fileSender,
     statsImageRenderer,
     callbackResponder,
+    pendingMessageSends,
     nextQueuePosition: async () => {
       queuePosition += 1;
       return queuePosition;
@@ -1434,6 +1496,10 @@ function createMockDependencies(options) {
       throw new Error(`Cannot send ${fileId}`);
     }
   }
+}
+
+function flushMicrotasks() {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 function filterByFileName(records, searchTerm) {
