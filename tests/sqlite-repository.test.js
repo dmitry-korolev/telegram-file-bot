@@ -11,6 +11,7 @@ const { createTelegramUserFilesRepository } = require('../src/adapters/sqlite/te
 function runTests() {
   testCreateRecordPersistsMetadata();
   testFindByFileUniqueIdReturnsExistingRecord();
+  testFindDeduplicationRecordIgnoresDownloadFailedRecords();
   testPendingManualDownloadQueuePrioritizesPhotoAndVideo();
   testPendingManualDownloadQueueCanSortByLargestKnownSize();
   testPendingManualDownloadQueueCanSortBySmallestKnownSize();
@@ -75,6 +76,34 @@ function testFindByFileUniqueIdReturnsExistingRecord() {
     assert.strictEqual(found.file_id, 'video-1');
     assert.strictEqual(found.file_kind, 'video');
     assert.strictEqual(missing, null);
+  });
+}
+
+function testFindDeduplicationRecordIgnoresDownloadFailedRecords() {
+  withRepository((repository) => {
+    repository.create(createRecord({
+      file_id: 'failed-1',
+      file_unique_id: 'retry-unique-id',
+      status: 'download_failed',
+      error_code: 'download_failed',
+      created_at: '2026-05-16T10:00:00.000Z'
+    }));
+
+    assert.strictEqual(repository.findDeduplicationRecordByFileUniqueId('retry-unique-id'), null);
+
+    repository.create(createRecord({
+      file_id: 'downloaded-1',
+      file_unique_id: 'retry-unique-id',
+      status: 'downloaded',
+      queue_position: null,
+      created_at: '2026-05-16T10:01:00.000Z'
+    }));
+
+    const found = repository.findDeduplicationRecordByFileUniqueId('retry-unique-id');
+
+    assert.ok(found);
+    assert.strictEqual(found.file_id, 'downloaded-1');
+    assert.strictEqual(found.status, 'downloaded');
   });
 }
 

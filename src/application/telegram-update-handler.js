@@ -967,7 +967,9 @@ function createTelegramUpdateHandler(dependencies) {
         continue;
       }
 
-      const existingRecord = await deps.fileRepository.findByFileUniqueId(attachment.file_unique_id);
+      const existingRecord = typeof deps.fileRepository.findDeduplicationRecordByFileUniqueId === 'function'
+        ? await deps.fileRepository.findDeduplicationRecordByFileUniqueId(attachment.file_unique_id)
+        : await deps.fileRepository.findByFileUniqueId(attachment.file_unique_id);
 
       if (existingRecord) {
         keys.add(attachment.file_unique_id);

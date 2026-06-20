@@ -12,6 +12,7 @@ function createTelegramUserFilesRepository(sqliteClient) {
     initializeSchema,
     create,
     findByFileUniqueId,
+    findDeduplicationRecordByFileUniqueId,
     getPendingManualDownloadQueue,
     getManualDownloadQueue,
     getManualDownloadQueueSummary,
@@ -186,6 +187,19 @@ function createTelegramUserFilesRepository(sqliteClient) {
       SELECT *
       FROM telegram_user_files
       WHERE file_unique_id = ${toSqlValue(fileUniqueId)}
+      ORDER BY created_at ASC, id ASC
+      LIMIT 1;
+    `);
+
+    return rows[0] || null;
+  }
+
+  function findDeduplicationRecordByFileUniqueId(fileUniqueId) {
+    const rows = sqliteClient.query(`
+      SELECT *
+      FROM telegram_user_files
+      WHERE file_unique_id = ${toSqlValue(fileUniqueId)}
+        AND status != 'download_failed'
       ORDER BY created_at ASC, id ASC
       LIMIT 1;
     `);

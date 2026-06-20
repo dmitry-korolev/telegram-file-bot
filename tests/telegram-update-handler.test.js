@@ -21,6 +21,8 @@ async function runTests() {
   await testSecondAuthorizedUserIsAccepted();
   await testSmallFilesUseDownloaderAndDownloadedRecord();
   await testSmallDownloadFailureCreatesFailedRecordAndResponds();
+  await testDownloadFailedRecordDoesNotBlockRetry();
+  await testSuccessfulRetryBlocksLaterDuplicates();
   await testLargeFilesAreQueuedWithoutDownloader();
   await testDuplicateFilesAreSkipped();
   await testUnknownSizeFilesUseManualQueueStatus();
@@ -252,6 +254,62 @@ async function testSmallDownloadFailureCreatesFailedRecordAndResponds() {
   assert.strictEqual(deps.messageDeleter.calls.length, 0);
   assert.strictEqual(deps.messageSender.calls[0].text, 'Файл "file" не удалось скачать.');
   assert.strictEqual(deps.fileRepository.events.some((event) => event.event_type === 'download_failed'), true);
+}
+
+async function testDownloadFailedRecordDoesNotBlockRetry() {
+  const deps = createMockDependencies({
+    records: [
+      createRepositoryRecord({
+        file_id: 'doc-small',
+        file_unique_id: 'uniq-retry-after-failure',
+        status: 'download_failed',
+        error_code: 'download_failed'
+      })
+    ]
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 58,
+    message: createMessage({
+      document: createTelegramFile('doc-small', 'uniq-retry-after-failure', 1024)
+    })
+  });
+
+  assert.strictEqual(result.files[0].status, 'downloaded');
+  assert.strictEqual(deps.downloader.calls.length, 1);
+  assert.strictEqual(deps.fileRepository.records.length, 2);
+  assert.strictEqual(deps.fileRepository.records[1].status, 'downloaded');
+}
+
+async function testSuccessfulRetryBlocksLaterDuplicates() {
+  const deps = createMockDependencies({
+    records: [
+      createRepositoryRecord({
+        file_id: 'doc-failed',
+        file_unique_id: 'uniq-retry-then-duplicate',
+        status: 'download_failed',
+        error_code: 'download_failed'
+      }),
+      createRepositoryRecord({
+        file_id: 'doc-downloaded',
+        file_unique_id: 'uniq-retry-then-duplicate',
+        status: 'downloaded',
+        local_path: '/tmp/doc-downloaded'
+      })
+    ]
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 59,
+    message: createMessage({
+      document: createTelegramFile('doc-new', 'uniq-retry-then-duplicate', 1024)
+    })
+  });
+
+  assert.strictEqual(result.files[0].status, 'duplicate_skipped');
+  assert.strictEqual(deps.downloader.calls.length, 0);
 }
 
 async function testLargeFilesAreQueuedWithoutDownloader() {
@@ -1030,7 +1088,7 @@ function createMockDependencies(options) {
   const pendingMessageSends = [];
 
   const fileRepository = {
-    records: [],
+    records: normalizedOptions.records || [],
     pendingQueue: normalizedOptions.pendingQueue || [],
     manualQueue: normalizedOptions.manualQueue || normalizedOptions.pendingQueue || [],
     archiveQueue: normalizedOptions.archiveQueue || [],
@@ -1055,6 +1113,15 @@ function createMockDependencies(options) {
       }
 
       return this.records.find((record) => record.file_unique_id === fileUniqueId) || null;
+    },
+    async findDeduplicationRecordByFileUniqueId(fileUniqueId) {
+      if (existingFileUniqueIds.has(fileUniqueId)) {
+        return { id: 9001, file_unique_id: fileUniqueId, status: 'downloaded' };
+      }
+
+      return this.records.find((record) => (
+        record.file_unique_id === fileUniqueId && record.status !== 'download_failed'
+      )) || null;
     },
     async create(record) {
       const created = Object.assign({ id: this.records.length + 1 }, record);
