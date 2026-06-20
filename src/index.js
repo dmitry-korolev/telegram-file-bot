@@ -27,8 +27,7 @@ async function main() {
     sqliteDbPath: config.sqliteDbPath,
     smallFileLimitBytes: config.smallFileLimitBytes,
     telegramPollingTimeoutSeconds: config.telegramPollingTimeoutSeconds,
-    telegramApiMinRequestIntervalMs: config.telegramApiMinRequestIntervalMs,
-    mediaGroupResponseDelayMs: config.mediaGroupResponseDelayMs
+    telegramApiMinRequestIntervalMs: config.telegramApiMinRequestIntervalMs
   });
 
   validateRuntimeConfig(config);
@@ -62,7 +61,6 @@ async function main() {
     statsImageRenderer,
     callbackResponder: telegramClient,
     nextQueuePosition: () => fileRepository.getNextQueuePosition(),
-    mediaGroupResponseDelayMs: config.mediaGroupResponseDelayMs,
     logger
   });
   const pollingLoop = createTelegramPollingLoop({

@@ -230,20 +230,16 @@ function buildProcessingResponse(files) {
     return null;
   }
 
-  if (normalizedFiles.length === 1) {
-    return buildSingleFileResponse(normalizedFiles[0]);
-  }
-
-  const counts = countFileStatuses(normalizedFiles);
-
-  return `Итог: скачано ${counts.downloaded}, в очереди ${counts.queued}, дубликатов ${counts.duplicates}, ошибок ${counts.errors}.`;
+  return buildSingleFileResponse(normalizedFiles[0]);
 }
 
 function buildSingleFileResponse(file) {
   const fileName = file.fileName || defaultFileName(file.fileKind);
 
   if (file.status === 'downloaded') {
-    return `Файл "${fileName}" скачан.`;
+    const localPath = file.record && file.record.local_path;
+
+    return localPath ? `Файл "${fileName}" скачан: ${localPath}` : `Файл "${fileName}" скачан.`;
   }
 
   if (file.status === 'pending_manual_download') {
@@ -263,27 +259,6 @@ function buildSingleFileResponse(file) {
   }
 
   return `Файл "${fileName}" обработан со статусом ${file.status}.`;
-}
-
-function countFileStatuses(files) {
-  return files.reduce((counts, file) => {
-    if (file.status === 'downloaded') {
-      counts.downloaded += 1;
-    } else if (file.status === 'pending_manual_download' || file.status === 'pending_size_unknown') {
-      counts.queued += 1;
-    } else if (file.status === 'duplicate_skipped') {
-      counts.duplicates += 1;
-    } else if (file.status.endsWith('_failed')) {
-      counts.errors += 1;
-    }
-
-    return counts;
-  }, {
-    downloaded: 0,
-    queued: 0,
-    duplicates: 0,
-    errors: 0
-  });
 }
 
 function defaultFileName(fileKind) {
@@ -338,6 +313,5 @@ module.exports = {
   buildClearQueueConfirmedMessage,
   buildProcessingResponse,
   buildSingleFileResponse,
-  countFileStatuses,
   formatFileSize
 };

@@ -27,10 +27,10 @@ async function runTests() {
   await testTextMessageWithoutAttachmentsIsDeleted();
   await testCommandMessageWithoutAttachmentsIsNotDeleted();
   await testProcessingSendsSingleFileResponse();
-  await testProcessingSendsMultipleFilesSummary();
+  await testProcessingSendsSeparateFileResponses();
   await testDeleteMessageFailureIsRecordedWithoutStatusOverwrite();
-  await testMediaGroupAggregatesResponseAfterDelay();
-  await testSeparateMediaGroupsDoNotMixResponses();
+  await testMediaGroupSendsImmediateFileResponses();
+  await testSeparateMediaGroupsSendImmediateResponses();
   await testShowQueueCommandShowsQueue();
   await testSearchQueueCommandShowsFilteredQueueAndButtons();
   await testSearchQueueButtonShowsFilteredBatch();
@@ -155,7 +155,14 @@ async function testExtractsSupportedAttachmentsAndIgnoresUnsupported() {
     ['uniq-doc-small', 'uniq-photo-high', 'uniq-video-large']
   );
   assert.strictEqual(deps.messageDeleter.calls.length, 1);
-  assert.strictEqual(deps.messageSender.calls.length, 1);
+  assert.deepStrictEqual(
+    deps.messageSender.calls.map((call) => call.text),
+    [
+      'Файл "small.txt" скачан: /tmp/doc-small',
+      'Файл "photo.jpg" скачан: /tmp/photo-small-high',
+      'Файл "video" добавлен в очередь.'
+    ]
+  );
 }
 
 async function testIgnoresUnauthorizedMessages() {
@@ -215,8 +222,9 @@ async function testSmallFilesUseDownloaderAndDownloadedRecord() {
   assert.strictEqual(deps.messageSender.calls.length, 1);
   assert.strictEqual(
     deps.messageSender.calls[0].text,
-    'Файл "file" скачан.'
+    'Файл "file" скачан: /tmp/doc-small'
   );
+  assert.deepStrictEqual(result.responseTexts, ['Файл "file" скачан: /tmp/doc-small']);
 }
 
 async function testSmallDownloadFailureCreatesFailedRecordAndResponds() {
@@ -363,11 +371,12 @@ async function testProcessingSendsSingleFileResponse() {
   assert.strictEqual(deps.messageSender.calls[0].chatId, 5001);
   assert.strictEqual(
     deps.messageSender.calls[0].text,
-    'Файл "report.pdf" скачан.'
+    'Файл "report.pdf" скачан: /tmp/doc-small'
   );
+  assert.deepStrictEqual(result.responseTexts, ['Файл "report.pdf" скачан: /tmp/doc-small']);
 }
 
-async function testProcessingSendsMultipleFilesSummary() {
+async function testProcessingSendsSeparateFileResponses() {
   const deps = createMockDependencies({
     existingFileUniqueIds: ['uniq-duplicate']
   });
@@ -385,10 +394,16 @@ async function testProcessingSendsMultipleFilesSummary() {
   });
 
   assert.strictEqual(result.sendMessageCalled, true);
-  assert.strictEqual(
-    deps.messageSender.calls[0].text,
-    'Итог: скачано 1, в очереди 1, дубликатов 1, ошибок 0.'
+  assert.strictEqual(deps.messageSender.calls.length, 3);
+  assert.deepStrictEqual(
+    deps.messageSender.calls.map((call) => call.text),
+    [
+      'Файл "file" скачан: /tmp/doc-small',
+      'Файл "photo.jpg" уже был раньше.',
+      'Файл "video" добавлен в очередь.'
+    ]
   );
+  assert.deepStrictEqual(result.responseTexts, deps.messageSender.calls.map((call) => call.text));
 }
 
 async function testDeleteMessageFailureIsRecordedWithoutStatusOverwrite() {
@@ -412,11 +427,8 @@ async function testDeleteMessageFailureIsRecordedWithoutStatusOverwrite() {
   assert.strictEqual(deps.fileRepository.events.some((event) => event.event_type === 'delete_message_failed'), true);
 }
 
-async function testMediaGroupAggregatesResponseAfterDelay() {
-  const timers = createFakeTimers();
-  const deps = createMockDependencies(Object.assign({}, timers.dependencies, {
-    mediaGroupResponseDelayMs: 25
-  }));
+async function testMediaGroupSendsImmediateFileResponses() {
+  const deps = createMockDependencies();
   const handler = createTelegramUpdateHandler(deps);
 
   const first = await handler.handleUpdate({
@@ -434,26 +446,21 @@ async function testMediaGroupAggregatesResponseAfterDelay() {
     })
   });
 
-  assert.strictEqual(first.responseDeferred, true);
-  assert.strictEqual(second.responseDeferred, true);
-  assert.strictEqual(deps.messageSender.calls.length, 0);
+  assert.strictEqual(first.responseDeferred, undefined);
+  assert.strictEqual(second.responseDeferred, undefined);
+  assert.strictEqual(deps.messageSender.calls.length, 2);
   assert.strictEqual(deps.fileRepository.records.length, 2);
-  assert.strictEqual(timers.cleared.length, 1);
-
-  await timers.flushLatest();
-
-  assert.strictEqual(deps.messageSender.calls.length, 1);
-  assert.strictEqual(
-    deps.messageSender.calls[0].text,
-    'Итог: скачано 1, в очереди 1, дубликатов 0, ошибок 0.'
+  assert.deepStrictEqual(
+    deps.messageSender.calls.map((call) => call.text),
+    [
+      'Файл "file" скачан: /tmp/doc-small-1',
+      'Файл "video" добавлен в очередь.'
+    ]
   );
 }
 
-async function testSeparateMediaGroupsDoNotMixResponses() {
-  const timers = createFakeTimers();
-  const deps = createMockDependencies(Object.assign({}, timers.dependencies, {
-    mediaGroupResponseDelayMs: 25
-  }));
+async function testSeparateMediaGroupsSendImmediateResponses() {
+  const deps = createMockDependencies();
   const handler = createTelegramUpdateHandler(deps);
 
   await handler.handleUpdate({
@@ -471,13 +478,9 @@ async function testSeparateMediaGroupsDoNotMixResponses() {
     })
   });
 
-  await timers.flushAt(0);
-  assert.strictEqual(deps.messageSender.calls.length, 1);
-  assert.strictEqual(deps.messageSender.calls[0].text.includes('Файл "file" скачан.'), true);
-
-  await timers.flushAt(1);
   assert.strictEqual(deps.messageSender.calls.length, 2);
-  assert.strictEqual(deps.messageSender.calls[1].text.includes('Файл "file" скачан.'), true);
+  assert.strictEqual(deps.messageSender.calls[0].text, 'Файл "file" скачан: /tmp/doc-a');
+  assert.strictEqual(deps.messageSender.calls[1].text, 'Файл "file" скачан: /tmp/doc-b');
 }
 
 async function testShowQueueCommandShowsQueue() {
@@ -1422,9 +1425,6 @@ function createMockDependencies(options) {
       queuePosition += 1;
       return queuePosition;
     },
-    mediaGroupResponseDelayMs: normalizedOptions.mediaGroupResponseDelayMs,
-    setTimeoutFn: normalizedOptions.setTimeoutFn,
-    clearTimeoutFn: normalizedOptions.clearTimeoutFn,
     logger: normalizedOptions.logger || { error() {} },
     now: () => '2026-05-16T10:00:00.000Z'
   };

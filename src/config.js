@@ -11,8 +11,7 @@ function createConfig(env) {
     downloadsDir: env.DOWNLOADS_DIR || './storage/downloads',
     sqliteDbPath: env.SQLITE_DB_PATH || './storage/bot.sqlite',
     telegramPollingTimeoutSeconds: normalizeOptionalNumber(env.TELEGRAM_POLLING_TIMEOUT_SECONDS) || 25,
-    telegramApiMinRequestIntervalMs: normalizeOptionalNumber(env.TELEGRAM_API_MIN_REQUEST_INTERVAL_MS) || 100,
-    mediaGroupResponseDelayMs: normalizeOptionalNumber(env.MEDIA_GROUP_RESPONSE_DELAY_MS) || 2000
+    telegramApiMinRequestIntervalMs: normalizeOptionalNumber(env.TELEGRAM_API_MIN_REQUEST_INTERVAL_MS) || 100
   };
 }
 

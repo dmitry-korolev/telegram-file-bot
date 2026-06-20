@@ -20,7 +20,7 @@ On startup, the bot also syncs its Telegram command menu with the supported comm
 
 For bursty uploads, the bot processes updates sequentially and advances the Telegram update offset only after an update is handled successfully. Telegram API calls are throttled by `TELEGRAM_API_MIN_REQUEST_INTERVAL_MS`.
 
-For Telegram media groups, file processing starts immediately for every update, but the bot sends one aggregated summary after `MEDIA_GROUP_RESPONSE_DELAY_MS` milliseconds without new updates for the same group.
+For Telegram media groups, file processing and responses start immediately for every update. The bot sends a separate message for each processed file.
 
 Development mode with file watching:
 

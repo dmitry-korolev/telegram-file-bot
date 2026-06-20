@@ -17,7 +17,7 @@ const {
   buildQueueReplyRequiredMessage,
   buildQueueReturnConfirmedMessage,
   buildQueueSummaryMessage,
-  buildProcessingResponse,
+  buildSingleFileResponse,
   buildStatsMessage,
   createShowNextFilesKeyboard,
   getCommandArgumentText,
@@ -37,8 +37,9 @@ function runTests() {
   testShownFilesMessageMarksFilesDownloaded();
   testArchiveMessages();
   testQueueReturnMessages();
-  testSingleDownloadedFileMessage();
-  testMultipleFilesSummary();
+  testDownloadedFileMessageIncludesLocalPath();
+  testDownloadedFileMessageFallsBackWithoutLocalPath();
+  testPerFileProcessingMessages();
 }
 
 function testStatsMessage() {
@@ -221,14 +222,30 @@ function testSearchMessages() {
   );
 }
 
-function testSingleDownloadedFileMessage() {
-  const response = buildProcessingResponse([
+function testDownloadedFileMessageIncludesLocalPath() {
+  const response = buildSingleFileResponse(
     {
       fileKind: 'document',
       fileName: 'report.pdf',
-      status: 'downloaded'
+      status: 'downloaded',
+      record: {
+        local_path: '/storage/downloads/2026-05-16/report.pdf'
+      }
     }
-  ]);
+  );
+
+  assert.strictEqual(
+    response,
+    'Файл "report.pdf" скачан: /storage/downloads/2026-05-16/report.pdf'
+  );
+}
+
+function testDownloadedFileMessageFallsBackWithoutLocalPath() {
+  const response = buildSingleFileResponse({
+    fileKind: 'document',
+    fileName: 'report.pdf',
+    status: 'downloaded'
+  });
 
   assert.strictEqual(
     response,
@@ -236,18 +253,18 @@ function testSingleDownloadedFileMessage() {
   );
 }
 
-function testMultipleFilesSummary() {
-  const response = buildProcessingResponse([
-    { status: 'downloaded' },
-    { status: 'pending_manual_download' },
-    { status: 'pending_size_unknown' },
-    { status: 'duplicate_skipped' },
-    { status: 'download_failed' }
-  ]);
-
+function testPerFileProcessingMessages() {
   assert.strictEqual(
-    response,
-    'Итог: скачано 1, в очереди 2, дубликатов 1, ошибок 1.'
+    buildSingleFileResponse({ fileName: 'large.mp4', status: 'pending_manual_download' }),
+    'Файл "large.mp4" добавлен в очередь.'
+  );
+  assert.strictEqual(
+    buildSingleFileResponse({ fileName: 'old.pdf', status: 'duplicate_skipped' }),
+    'Файл "old.pdf" уже был раньше.'
+  );
+  assert.strictEqual(
+    buildSingleFileResponse({ fileName: 'broken.pdf', status: 'download_failed' }),
+    'Файл "broken.pdf" не удалось скачать.'
   );
 }
 

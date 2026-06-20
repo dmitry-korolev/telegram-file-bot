@@ -9,7 +9,6 @@ function runTests() {
   testParseEnvReadsSimpleValues();
   testParseEnvUnquotesValues();
   testConfigParsesAuthorizedUserIds();
-  testConfigParsesMediaGroupResponseDelay();
 }
 
 function testParseEnvReadsSimpleValues() {
@@ -31,15 +30,6 @@ function testConfigParsesAuthorizedUserIds() {
   });
 
   assert.deepStrictEqual(config.authorizedUserIds, [42, 77, 88]);
-}
-
-function testConfigParsesMediaGroupResponseDelay() {
-  const config = createConfig({
-    AUTHORIZED_USER_IDS: '42',
-    MEDIA_GROUP_RESPONSE_DELAY_MS: '1500'
-  });
-
-  assert.strictEqual(config.mediaGroupResponseDelayMs, 1500);
 }
 
 function testParseEnvUnquotesValues() {

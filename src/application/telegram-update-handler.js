@@ -9,7 +9,7 @@ const {
   buildArchiveSummaryMessage,
   buildClearQueueConfirmedMessage,
   buildClearQueuePrompt,
-  buildProcessingResponse,
+  buildSingleFileResponse,
   buildQueueFileNotFoundMessage,
   buildQueueMessage,
   buildQueueReplyRequiredMessage,
@@ -44,7 +44,6 @@ const CALLBACK_SEARCH_ARCHIVE_NEXT_PREFIX = 'search_archive_next:';
 const CALLBACK_SEARCH_ARCHIVE_LARGEST_PREFIX = 'search_archive_largest:';
 const CALLBACK_SEARCH_ARCHIVE_SMALLEST_PREFIX = 'search_archive_smallest:';
 const MANUAL_DOWNLOAD_BATCH_SIZE = 10;
-const DEFAULT_MEDIA_GROUP_RESPONSE_DELAY_MS = 2000;
 
 function createTelegramUpdateHandler(dependencies) {
   const deps = dependencies || {};
@@ -77,14 +76,7 @@ function createTelegramUpdateHandler(dependencies) {
   const smallFileLimitBytes = deps.smallFileLimitBytes || DEFAULT_SMALL_FILE_LIMIT_BYTES;
   const now = deps.now || (() => new Date().toISOString());
   const nextQueuePosition = deps.nextQueuePosition || createInMemoryQueuePosition();
-  const mediaGroupResponseDelayMs = normalizeNonNegativeInteger(
-    deps.mediaGroupResponseDelayMs,
-    DEFAULT_MEDIA_GROUP_RESPONSE_DELAY_MS
-  );
   const logger = normalizeLogger(deps.logger || console);
-  const setTimeoutFn = deps.setTimeoutFn || setTimeout;
-  const clearTimeoutFn = deps.clearTimeoutFn || clearTimeout;
-  const mediaGroupResponses = new Map();
   const searchContexts = new Map();
   let nextSearchContextId = 1;
 
@@ -185,47 +177,7 @@ function createTelegramUpdateHandler(dependencies) {
       await persistDeleteMessageFailure(files, deleteMessageError);
     }
 
-    if (message.media_group_id) {
-      scheduleMediaGroupResponse(message, files);
-
-      return {
-        accepted: true,
-        reason: processedMessage.reason,
-        files,
-        deleteMessageCalled,
-        deleteMessageError,
-        sendMessageCalled: false,
-        sendMessageError: null,
-        responseDeferred: true,
-        responseText: null
-      };
-    }
-
-    const responseText = buildProcessingResponse(files);
-    let sendMessageCalled = false;
-    let sendMessageError = null;
-
-    if (responseText) {
-      sendMessageCalled = true;
-
-      try {
-        logger.log('sending processing response', {
-          chatId: message.chat && message.chat.id,
-          fileCount: files.length
-        });
-        await deps.messageSender.sendMessage({
-          chatId: message.chat && message.chat.id,
-          text: responseText
-        });
-      } catch (error) {
-        sendMessageError = error;
-        logger.error('processing response send failed', {
-          chatId: message.chat && message.chat.id,
-          fileCount: files.length,
-          error
-        });
-      }
-    }
+    const processingResponse = await sendProcessingResponses(message, files);
 
     return {
       accepted: true,
@@ -233,9 +185,10 @@ function createTelegramUpdateHandler(dependencies) {
       files,
       deleteMessageCalled,
       deleteMessageError,
-      sendMessageCalled,
-      sendMessageError,
-      responseText
+      sendMessageCalled: processingResponse.sendMessageCalled,
+      sendMessageError: processingResponse.sendMessageError,
+      responseText: processingResponse.responseText,
+      responseTexts: processingResponse.responseTexts
     };
   }
 
@@ -1197,37 +1150,6 @@ function createTelegramUpdateHandler(dependencies) {
     return deps.fileRepository.incrementMetaCounter('duplicate_skipped_count', 1, now());
   }
 
-  function scheduleMediaGroupResponse(message, files) {
-    const mediaGroupId = message.media_group_id;
-    const existing = mediaGroupResponses.get(mediaGroupId);
-    const buffer = existing || {
-      chatId: message.chat && message.chat.id,
-      files: [],
-      timeoutId: null
-    };
-
-    buffer.chatId = message.chat && message.chat.id;
-    buffer.files.push(...files);
-
-    if (buffer.timeoutId) {
-      clearTimeoutFn(buffer.timeoutId);
-    }
-
-    buffer.timeoutId = setTimeoutFn(() => {
-      flushMediaGroupResponse(mediaGroupId).catch((error) => {
-        logger.error('media group response flush failed', { mediaGroupId, error });
-      });
-    }, mediaGroupResponseDelayMs);
-
-    logger.log('media group response scheduled', {
-      mediaGroupId,
-      chatId: buffer.chatId,
-      fileCount: buffer.files.length,
-      delayMs: mediaGroupResponseDelayMs
-    });
-    mediaGroupResponses.set(mediaGroupId, buffer);
-  }
-
   function logDownloadFailure(attachment, error) {
     const payload = {
       fileId: attachment && attachment.file_id,
@@ -1238,29 +1160,6 @@ function createTelegramUpdateHandler(dependencies) {
     };
 
     logger.error('telegram file download failed', payload);
-  }
-
-  async function flushMediaGroupResponse(mediaGroupId) {
-    const buffer = mediaGroupResponses.get(mediaGroupId);
-
-    if (!buffer) {
-      return null;
-    }
-
-    mediaGroupResponses.delete(mediaGroupId);
-
-    const responseText = buildProcessingResponse(buffer.files);
-
-    if (!responseText) {
-      return null;
-    }
-
-    await deps.messageSender.sendMessage({
-      chatId: buffer.chatId,
-      text: responseText
-    });
-
-    return responseText;
   }
 
   function buildRecord(attachment, overrides) {
@@ -1288,6 +1187,40 @@ function createTelegramUpdateHandler(dependencies) {
       created_at: null,
       updated_at: null
     }, overrides);
+  }
+
+  async function sendProcessingResponses(message, files) {
+    const responseTexts = (files || [])
+      .map((file) => buildSingleFileResponse(file))
+      .filter(Boolean);
+    let sendMessageError = null;
+
+    for (const responseText of responseTexts) {
+      try {
+        logger.log('sending processing response', {
+          chatId: message.chat && message.chat.id,
+          fileCount: 1
+        });
+        await deps.messageSender.sendMessage({
+          chatId: message.chat && message.chat.id,
+          text: responseText
+        });
+      } catch (error) {
+        sendMessageError = error;
+        logger.error('processing response send failed', {
+          chatId: message.chat && message.chat.id,
+          fileCount: 1,
+          error
+        });
+      }
+    }
+
+    return {
+      sendMessageCalled: responseTexts.length > 0,
+      sendMessageError,
+      responseText: responseTexts[0] || null,
+      responseTexts
+    };
   }
 }
 
@@ -1328,7 +1261,6 @@ module.exports = {
   createTelegramUpdateHandler,
   extractMessage,
   createInMemoryQueuePosition,
-  DEFAULT_MEDIA_GROUP_RESPONSE_DELAY_MS,
   CALLBACK_SHOW_NEXT_FILES,
   CALLBACK_SHOW_LARGEST_FILES,
   CALLBACK_SHOW_SMALLEST_FILES,

@@ -20,7 +20,7 @@ npm start
 
 При массовой загрузке бот обрабатывает updates последовательно и сдвигает Telegram offset только после успешной обработки update. Вызовы Telegram API ограничиваются настройкой `TELEGRAM_API_MIN_REQUEST_INTERVAL_MS`.
 
-Для Telegram media groups обработка файлов начинается сразу для каждого update, но бот отправляет один общий итог после `MEDIA_GROUP_RESPONSE_DELAY_MS` миллисекунд без новых updates для той же группы.
+Для Telegram media groups обработка файлов и ответы начинаются сразу для каждого update. Бот отправляет отдельное сообщение по каждому обработанному файлу.
 
 Режим разработки с file watching:
 
