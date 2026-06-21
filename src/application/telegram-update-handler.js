@@ -22,6 +22,7 @@ const {
   buildStatsMessage,
   buildShownArchiveFilesMessage,
   buildShownFilesMessage,
+  buildShownPotentialDuplicateFilesMessage,
   createClearQueueConfirmationKeyboard,
   createShowNextFilesKeyboard,
   getCommandArgumentText,
@@ -32,6 +33,7 @@ const {
 const CALLBACK_SHOW_NEXT_FILES = 'show_next_files';
 const CALLBACK_SHOW_LARGEST_FILES = 'show_largest_files';
 const CALLBACK_SHOW_SMALLEST_FILES = 'show_smallest_files';
+const CALLBACK_SHOW_POSSIBLE_DUPLICATES = 'show_possible_duplicates';
 const CALLBACK_SHOW_NEXT_ARCHIVE_FILES = 'show_next_archive_files';
 const CALLBACK_SHOW_LARGEST_ARCHIVE_FILES = 'show_largest_archive_files';
 const CALLBACK_SHOW_SMALLEST_ARCHIVE_FILES = 'show_smallest_archive_files';
@@ -381,6 +383,10 @@ function createTelegramUpdateHandler(dependencies) {
       return showManualDownloadBatch(callbackQuery, 'size_asc');
     }
 
+    if (callbackQuery.data === CALLBACK_SHOW_POSSIBLE_DUPLICATES) {
+      return showPotentialDuplicateBatch(callbackQuery);
+    }
+
     if (callbackQuery.data === CALLBACK_SHOW_NEXT_ARCHIVE_FILES) {
       return showArchiveBatch(callbackQuery, 'queue');
     }
@@ -558,6 +564,21 @@ function createTelegramUpdateHandler(dependencies) {
       createKeyboard: createShowNextFilesKeyboard,
       reasonEmpty: 'manual_download_queue_empty',
       reasonShown: 'manual_download_batch_shown'
+    });
+  }
+
+  async function showPotentialDuplicateBatch(callbackQuery) {
+    return showFileBatch(callbackQuery, {
+      source: 'queue',
+      orderBy: 'potential_duplicates',
+      getFiles: () => deps.fileRepository.getPotentialDuplicateQueueGroup(),
+      getRemainingCount: getRemainingPotentialDuplicateGroupCount,
+      emptyText: 'В очереди нет возможных дубликатов.',
+      emptyAfterShownText: 'В очереди нет возможных дубликатов.',
+      buildShownMessage: buildShownPotentialDuplicateFilesMessage,
+      createKeyboard: createQueueKeyboard,
+      reasonEmpty: 'potential_duplicates_empty',
+      reasonShown: 'potential_duplicates_batch_shown'
     });
   }
 
@@ -903,12 +924,26 @@ function createTelegramUpdateHandler(dependencies) {
     return summary && Number.isFinite(summary.fileCount) ? summary.fileCount : 0;
   }
 
+  async function getRemainingPotentialDuplicateGroupCount() {
+    if (typeof deps.fileRepository.getPotentialDuplicateQueueGroupSummary !== 'function') {
+      return 0;
+    }
+
+    const summary = await deps.fileRepository.getPotentialDuplicateQueueGroupSummary();
+    return summary && Number.isFinite(summary.groupCount) ? summary.groupCount : 0;
+  }
+
+  function createQueueKeyboard() {
+    return createShowNextFilesKeyboard();
+  }
+
   function createArchiveKeyboard() {
     return createShowNextFilesKeyboard({
       callbackData: {
         showNext: CALLBACK_SHOW_NEXT_ARCHIVE_FILES,
         showLargest: CALLBACK_SHOW_LARGEST_ARCHIVE_FILES,
-        showSmallest: CALLBACK_SHOW_SMALLEST_ARCHIVE_FILES
+        showSmallest: CALLBACK_SHOW_SMALLEST_ARCHIVE_FILES,
+        showPotentialDuplicates: null
       }
     });
   }
@@ -918,7 +953,8 @@ function createTelegramUpdateHandler(dependencies) {
       callbackData: {
         showNext: `${CALLBACK_SEARCH_QUEUE_NEXT_PREFIX}${contextId}`,
         showLargest: `${CALLBACK_SEARCH_QUEUE_LARGEST_PREFIX}${contextId}`,
-        showSmallest: `${CALLBACK_SEARCH_QUEUE_SMALLEST_PREFIX}${contextId}`
+        showSmallest: `${CALLBACK_SEARCH_QUEUE_SMALLEST_PREFIX}${contextId}`,
+        showPotentialDuplicates: null
       }
     });
   }
@@ -928,7 +964,8 @@ function createTelegramUpdateHandler(dependencies) {
       callbackData: {
         showNext: `${CALLBACK_SEARCH_ARCHIVE_NEXT_PREFIX}${contextId}`,
         showLargest: `${CALLBACK_SEARCH_ARCHIVE_LARGEST_PREFIX}${contextId}`,
-        showSmallest: `${CALLBACK_SEARCH_ARCHIVE_SMALLEST_PREFIX}${contextId}`
+        showSmallest: `${CALLBACK_SEARCH_ARCHIVE_SMALLEST_PREFIX}${contextId}`,
+        showPotentialDuplicates: null
       }
     });
   }
@@ -1270,6 +1307,7 @@ module.exports = {
   CALLBACK_SHOW_NEXT_FILES,
   CALLBACK_SHOW_LARGEST_FILES,
   CALLBACK_SHOW_SMALLEST_FILES,
+  CALLBACK_SHOW_POSSIBLE_DUPLICATES,
   CALLBACK_SHOW_NEXT_ARCHIVE_FILES,
   CALLBACK_SHOW_LARGEST_ARCHIVE_FILES,
   CALLBACK_SHOW_SMALLEST_ARCHIVE_FILES,

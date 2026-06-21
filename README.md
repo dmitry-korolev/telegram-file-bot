@@ -18,7 +18,7 @@ With a real `TELEGRAM_BOT_TOKEN`, `npm start` runs long polling against Telegram
 
 On startup, the bot also syncs its Telegram command menu with the supported commands.
 
-For bursty uploads, the bot processes updates sequentially and advances the Telegram update offset only after an update is handled successfully. Telegram API calls are throttled by `TELEGRAM_API_MIN_REQUEST_INTERVAL_MS`. User-visible outgoing messages and media are additionally sent through one shared queue controlled by `TELEGRAM_OUTGOING_MESSAGE_INTERVAL_MS`.
+For bursty uploads, the bot processes updates sequentially and advances the Telegram update offset only after an update is handled successfully. Telegram API calls are throttled by `TELEGRAM_API_MIN_REQUEST_INTERVAL_MS`. User-visible outgoing messages and media are additionally sent through one shared queue controlled by `TELEGRAM_OUTGOING_MESSAGE_INTERVAL_MS`, defaulting to 250 ms.
 
 For Telegram media groups, file processing and responses start immediately for every update. The bot sends a separate message for each processed file.
 
@@ -59,10 +59,11 @@ Available buttons:
 - `Показать следующие вложения` — sends the next batch of up to 10 queued files. Successfully sent files are immediately marked as `download_confirmed`.
 - `10 самых больших` — sends up to 10 queued files with the largest known size.
 - `10 самых маленьких` — sends up to 10 queued files with the smallest known size.
+- `Показать возможные дубликаты` — sends the largest same-size group from the queue when at least two pending files have the exact same known byte size. Successfully sent files are immediately marked as `download_confirmed`.
 - `Очистить очередь` — confirms `/clear_queue`.
 - `Отмена` — cancels queue cleanup.
 
-The same next/largest/smallest buttons are used for `/show_archive`, but they operate on archived files. Files shown from the archive are removed from the archive and marked as `download_confirmed`.
+The same next/largest/smallest buttons are used for `/show_archive`, but they operate on archived files. Files shown from the archive are removed from the archive and marked as `download_confirmed`. The possible-duplicates button is only shown for the main queue.
 
 To migrate already downloaded local files to the current naming rule, first inspect the plan:
 

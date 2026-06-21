@@ -9,6 +9,7 @@ const {
   CALLBACK_SHOW_LARGEST_FILES,
   CALLBACK_SHOW_NEXT_ARCHIVE_FILES,
   CALLBACK_SHOW_NEXT_FILES,
+  CALLBACK_SHOW_POSSIBLE_DUPLICATES,
   CALLBACK_SHOW_SMALLEST_ARCHIVE_FILES,
   CALLBACK_SHOW_SMALLEST_FILES,
   createTelegramUpdateHandler
@@ -54,6 +55,8 @@ async function runTests() {
   await testShowNextFilesSendsAtMostTenAndMarksShown();
   await testShowLargestFilesUsesSizeDescendingOrder();
   await testShowSmallestFilesUsesSizeAscendingOrder();
+  await testShowPossibleDuplicatesSendsLargestSameSizeGroup();
+  await testShowPossibleDuplicatesReportsEmptyQueue();
   await testShowNextFilesConfirmsPreviouslyShownFirst();
   await testShowNextFilesUsesQueueSummaryForRemainingCount();
   await testShowNextFilesReportsEmptyQueue();
@@ -610,6 +613,7 @@ async function testShowQueueCommandShowsQueue() {
   assert.deepStrictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].callback_data, CALLBACK_SHOW_NEXT_FILES);
   assert.deepStrictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[1][0].callback_data, CALLBACK_SHOW_LARGEST_FILES);
   assert.deepStrictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[1][1].callback_data, CALLBACK_SHOW_SMALLEST_FILES);
+  assert.deepStrictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[2][0].callback_data, CALLBACK_SHOW_POSSIBLE_DUPLICATES);
 }
 
 async function testSearchQueueCommandShowsFilteredQueueAndButtons() {
@@ -632,6 +636,7 @@ async function testSearchQueueCommandShowsFilteredQueueAndButtons() {
   assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].callback_data.startsWith('search_queue_next:'), true);
   assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[1][0].callback_data.startsWith('search_queue_largest:'), true);
   assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[1][1].callback_data.startsWith('search_queue_smallest:'), true);
+  assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard.length, 2);
 }
 
 async function testSearchQueueButtonShowsFilteredBatch() {
@@ -811,6 +816,7 @@ async function testShowArchiveCommandShowsArchiveSummary() {
   assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].callback_data, CALLBACK_SHOW_NEXT_ARCHIVE_FILES);
   assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[1][0].callback_data, CALLBACK_SHOW_LARGEST_ARCHIVE_FILES);
   assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[1][1].callback_data, CALLBACK_SHOW_SMALLEST_ARCHIVE_FILES);
+  assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard.length, 2);
 }
 
 async function testSearchArchiveCommandShowsFilteredArchiveAndButtons() {
@@ -833,6 +839,7 @@ async function testSearchArchiveCommandShowsFilteredArchiveAndButtons() {
   assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].callback_data.startsWith('search_archive_next:'), true);
   assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[1][0].callback_data.startsWith('search_archive_largest:'), true);
   assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[1][1].callback_data.startsWith('search_archive_smallest:'), true);
+  assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard.length, 2);
 }
 
 async function testClearQueueCommandRequestsConfirmation() {
@@ -960,6 +967,54 @@ async function testShowSmallestFilesUsesSizeAscendingOrder() {
     ['small-file', 'large-file']
   );
   assert.deepStrictEqual(deps.fileRepository.lastPendingQueueOptions.orderBy, 'size_asc');
+}
+
+async function testShowPossibleDuplicatesSendsLargestSameSizeGroup() {
+  const deps = createMockDependencies({
+    pendingQueue: [
+      createRepositoryRecord({ id: 1, file_id: 'largest-unique-file', file_unique_id: 'largest-unique', file_size: 100, file_kind: 'document' }),
+      createRepositoryRecord({ id: 2, file_id: 'small-dup-1', file_unique_id: 'small-dup-1-unique', file_size: 40, file_kind: 'document' }),
+      createRepositoryRecord({ id: 3, file_id: 'large-dup-2', file_unique_id: 'large-dup-2-unique', file_size: 80, file_kind: 'video', queue_position: 3 }),
+      createRepositoryRecord({ id: 4, file_id: 'large-dup-1', file_unique_id: 'large-dup-1-unique', file_size: 80, file_kind: 'photo', queue_position: 2 }),
+      createRepositoryRecord({ id: 5, file_id: 'small-dup-2', file_unique_id: 'small-dup-2-unique', file_size: 40, file_kind: 'document' })
+    ]
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 56,
+    callback_query: createCallbackQuery(CALLBACK_SHOW_POSSIBLE_DUPLICATES)
+  });
+
+  assert.strictEqual(result.reason, 'potential_duplicates_batch_shown');
+  assert.deepStrictEqual(
+    deps.fileSender.calls.map((call) => call.fileId),
+    ['large-dup-1', 'large-dup-2']
+  );
+  assert.deepStrictEqual(deps.fileRepository.confirmedIds, [4, 3]);
+  assert.deepStrictEqual(
+    deps.fileRepository.sentFiles.map((sentFile) => sentFile.file_record_id),
+    [4, 3]
+  );
+  assert.strictEqual(deps.messageSender.calls[0].text, 'Показано возможных дубликатов: 2. Они отмечены как скачанные. Осталось групп: 1.');
+}
+
+async function testShowPossibleDuplicatesReportsEmptyQueue() {
+  const deps = createMockDependencies({
+    pendingQueue: [
+      createRepositoryRecord({ id: 1, file_id: 'unique-file', file_unique_id: 'unique-file-unique', file_size: 100, file_kind: 'document' })
+    ]
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 57,
+    callback_query: createCallbackQuery(CALLBACK_SHOW_POSSIBLE_DUPLICATES)
+  });
+
+  assert.strictEqual(result.reason, 'potential_duplicates_empty');
+  assert.strictEqual(deps.messageSender.calls[0].text, 'В очереди нет возможных дубликатов.');
+  assert.deepStrictEqual(deps.fileSender.calls, []);
 }
 
 async function testShowNextFilesConfirmsPreviouslyShownFirst() {
@@ -1094,6 +1149,7 @@ function createMockDependencies(options) {
     archiveQueue: normalizedOptions.archiveQueue || [],
     queueSummary: normalizedOptions.queueSummary || null,
     pendingSummary: normalizedOptions.pendingSummary || null,
+    potentialDuplicateSummary: normalizedOptions.potentialDuplicateSummary || null,
     archiveSummary: normalizedOptions.archiveSummary || null,
     shownQueue: normalizedOptions.shownQueue || [],
     lastPendingQueueOptions: null,
@@ -1233,6 +1289,23 @@ function createMockDependencies(options) {
       }
 
       return this.pendingQueue.filter((record) => record.status === 'pending_manual_download' && record.file_kind === 'document').slice(0, limit);
+    },
+    async getPotentialDuplicateQueueGroup() {
+      const duplicateGroups = getPotentialDuplicateGroups(this.pendingQueue);
+      const largestGroup = duplicateGroups[0];
+
+      return largestGroup ? largestGroup.records : [];
+    },
+    async getPotentialDuplicateQueueGroupSummary() {
+      if (this.potentialDuplicateSummary) {
+        return this.potentialDuplicateSummary;
+      }
+
+      const duplicateGroups = getPotentialDuplicateGroups(this.pendingQueue);
+      return {
+        groupCount: duplicateGroups.length,
+        fileCount: duplicateGroups.reduce((sum, group) => sum + group.records.length, 0)
+      };
     },
     async searchPendingManualDownloadQueue(searchTerm, options) {
       const limit = options && options.limit ? options.limit : 10;
@@ -1577,6 +1650,38 @@ function filterByFileName(records, searchTerm) {
   }
 
   return records.filter((record) => String(record.file_name || '').toLowerCase().includes(needle));
+}
+
+function getPotentialDuplicateGroups(records) {
+  const groupsBySize = new Map();
+
+  records
+    .filter((record) => record.status === 'pending_manual_download' && Number.isFinite(record.file_size))
+    .forEach((record) => {
+      const group = groupsBySize.get(record.file_size) || [];
+      group.push(record);
+      groupsBySize.set(record.file_size, group);
+    });
+
+  return Array.from(groupsBySize.entries())
+    .filter((entry) => entry[1].length >= 2)
+    .map((entry) => ({
+      fileSize: entry[0],
+      records: entry[1].slice().sort(compareQueueOrder)
+    }))
+    .sort((left, right) => right.fileSize - left.fileSize);
+}
+
+function compareQueueOrder(left, right) {
+  if (left.queue_position !== right.queue_position) {
+    return left.queue_position - right.queue_position;
+  }
+
+  if (left.received_at !== right.received_at) {
+    return String(left.received_at || '').localeCompare(String(right.received_at || ''));
+  }
+
+  return left.id - right.id;
 }
 
 function buildMockSummary(records) {

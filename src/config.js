@@ -12,7 +12,7 @@ function createConfig(env) {
     sqliteDbPath: env.SQLITE_DB_PATH || './storage/bot.sqlite',
     telegramPollingTimeoutSeconds: normalizeOptionalNumber(env.TELEGRAM_POLLING_TIMEOUT_SECONDS) || 25,
     telegramApiMinRequestIntervalMs: normalizeOptionalNumber(env.TELEGRAM_API_MIN_REQUEST_INTERVAL_MS) || 100,
-    telegramOutgoingMessageIntervalMs: normalizeOptionalNumber(env.TELEGRAM_OUTGOING_MESSAGE_INTERVAL_MS) || 500
+    telegramOutgoingMessageIntervalMs: normalizeOptionalNumber(env.TELEGRAM_OUTGOING_MESSAGE_INTERVAL_MS) || 250
   };
 }
 

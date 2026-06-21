@@ -96,6 +96,10 @@ function testShowNextKeyboardIncludesQueueAndSizeActions() {
     keyboard[1][1].callback_data,
     'show_smallest_files'
   );
+  assert.strictEqual(
+    keyboard[2][0].callback_data,
+    'show_possible_duplicates'
+  );
 }
 
 function testShowNextKeyboardCanHideSizeActions() {
@@ -110,13 +114,15 @@ function testShowNextKeyboardCanUseCustomCallbacks() {
     callbackData: {
       showNext: 'archive_next',
       showLargest: 'archive_largest',
-      showSmallest: 'archive_smallest'
+      showSmallest: 'archive_smallest',
+      showPotentialDuplicates: null
     }
   }).inline_keyboard;
 
   assert.strictEqual(keyboard[0][0].callback_data, 'archive_next');
   assert.strictEqual(keyboard[1][0].callback_data, 'archive_largest');
   assert.strictEqual(keyboard[1][1].callback_data, 'archive_smallest');
+  assert.strictEqual(keyboard.length, 2);
 }
 
 function testShownFilesMessageMarksFilesDownloaded() {

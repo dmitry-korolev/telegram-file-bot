@@ -39,7 +39,7 @@ function testConfigParsesOutgoingMessageInterval() {
     TELEGRAM_OUTGOING_MESSAGE_INTERVAL_MS: '750'
   });
 
-  assert.strictEqual(defaults.telegramOutgoingMessageIntervalMs, 500);
+  assert.strictEqual(defaults.telegramOutgoingMessageIntervalMs, 250);
   assert.strictEqual(configured.telegramOutgoingMessageIntervalMs, 750);
 }
 

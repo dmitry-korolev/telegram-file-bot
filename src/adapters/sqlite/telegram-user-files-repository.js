@@ -14,6 +14,8 @@ function createTelegramUserFilesRepository(sqliteClient) {
     findByFileUniqueId,
     findDeduplicationRecordByFileUniqueId,
     getPendingManualDownloadQueue,
+    getPotentialDuplicateQueueGroup,
+    getPotentialDuplicateQueueGroupSummary,
     getManualDownloadQueue,
     getManualDownloadQueueSummary,
     getPendingManualDownloadSummary,
@@ -295,6 +297,53 @@ function createTelegramUserFilesRepository(sqliteClient) {
       ORDER BY queue_position ASC, received_at ASC, id ASC
       LIMIT ${limit};
     `);
+  }
+
+  function getPotentialDuplicateQueueGroup() {
+    const sizeRows = sqliteClient.query(`
+      SELECT file_size
+      FROM telegram_user_files
+      WHERE status = 'pending_manual_download'
+        AND file_size IS NOT NULL
+      GROUP BY file_size
+      HAVING COUNT(*) >= 2
+      ORDER BY file_size DESC
+      LIMIT 1;
+    `);
+
+    if (sizeRows.length === 0) {
+      return [];
+    }
+
+    return sqliteClient.query(`
+      SELECT *
+      FROM telegram_user_files
+      WHERE status = 'pending_manual_download'
+        AND file_size = ${toSqlValue(sizeRows[0].file_size)}
+      ORDER BY queue_position ASC, received_at ASC, id ASC;
+    `);
+  }
+
+  function getPotentialDuplicateQueueGroupSummary() {
+    const rows = sqliteClient.query(`
+      SELECT
+        COUNT(*) AS group_count,
+        COALESCE(SUM(file_count), 0) AS file_count
+      FROM (
+        SELECT file_size, COUNT(*) AS file_count
+        FROM telegram_user_files
+        WHERE status = 'pending_manual_download'
+          AND file_size IS NOT NULL
+        GROUP BY file_size
+        HAVING COUNT(*) >= 2
+      ) duplicate_groups;
+    `);
+    const row = rows[0] || {};
+
+    return {
+      groupCount: normalizeStatNumber(row.group_count),
+      fileCount: normalizeStatNumber(row.file_count)
+    };
   }
 
   function getManualDownloadQueue(options) {

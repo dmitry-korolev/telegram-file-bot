@@ -6,6 +6,7 @@ const { createQueuedTelegramSender } = require('../src/adapters/telegram/queued-
 
 async function runTests() {
   await testQueuedSenderRunsCallsInFifoOrderWithInterval();
+  await testQueuedSenderDefaultsToShortInterval();
   await testQueuedSenderSharesQueueAcrossMessageAndPhoto();
 }
 
@@ -72,6 +73,36 @@ async function testQueuedSenderSharesQueueAcrossMessageAndPhoto() {
   assert.deepStrictEqual(calls, [
     { method: 'sendMessage', value: 'queued text', at: 0 },
     { method: 'sendPhoto', value: 'photo-file-id', at: 500 }
+  ]);
+}
+
+async function testQueuedSenderDefaultsToShortInterval() {
+  const fakeClock = createFakeClock();
+  const calls = [];
+  const sender = createQueuedTelegramSender({
+    sender: {
+      async sendMessage(payload) {
+        calls.push({ text: payload.text, at: fakeClock.now() });
+        return { message_id: calls.length };
+      }
+    },
+    setTimeoutFn: fakeClock.setTimeoutFn,
+    now: fakeClock.now
+  });
+
+  const first = sender.sendMessage({ text: 'first' });
+  const second = sender.sendMessage({ text: 'second' });
+
+  await flushMicrotasks();
+
+  assert.strictEqual(fakeClock.timers[0].ms, 250);
+
+  fakeClock.runNextTimer();
+  await Promise.all([first, second]);
+
+  assert.deepStrictEqual(calls, [
+    { text: 'first', at: 0 },
+    { text: 'second', at: 250 }
   ]);
 }
 

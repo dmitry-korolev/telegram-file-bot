@@ -29,7 +29,8 @@ function createShowNextFilesKeyboard(options) {
   const callbackData = Object.assign({
     showNext: 'show_next_files',
     showLargest: 'show_largest_files',
-    showSmallest: 'show_smallest_files'
+    showSmallest: 'show_smallest_files',
+    showPotentialDuplicates: 'show_possible_duplicates'
   }, normalizedOptions.callbackData || {});
   const keyboard = [
     [
@@ -49,6 +50,15 @@ function createShowNextFilesKeyboard(options) {
       {
         text: '10 самых маленьких',
         callback_data: callbackData.showSmallest
+      }
+    ]);
+  }
+
+  if (includeSizeButtons && callbackData.showPotentialDuplicates) {
+    keyboard.push([
+      {
+        text: 'Показать возможные дубликаты',
+        callback_data: callbackData.showPotentialDuplicates
       }
     ]);
   }
@@ -191,6 +201,14 @@ function buildShownArchiveFilesMessage(shownCount, remainingCount) {
   return `Показано вложений из архива: ${shownCount}. Они отмечены как скачанные. Осталось в архиве: 0.`;
 }
 
+function buildShownPotentialDuplicateFilesMessage(shownCount, remainingGroupCount) {
+  if (shownCount === 0) {
+    return remainingGroupCount > 0 ? 'Не удалось показать возможные дубликаты.' : 'В очереди нет возможных дубликатов.';
+  }
+
+  return `Показано возможных дубликатов: ${shownCount}. Они отмечены как скачанные. Осталось групп: ${remainingGroupCount}.`;
+}
+
 function buildArchiveReplyRequiredMessage() {
   return 'Отправьте /archive в ответ на медиа, которое бот прислал из очереди или архива.';
 }
@@ -303,6 +321,7 @@ module.exports = {
   buildStatsMessage,
   buildShownFilesMessage,
   buildShownArchiveFilesMessage,
+  buildShownPotentialDuplicateFilesMessage,
   buildArchiveReplyRequiredMessage,
   buildArchiveFileNotFoundMessage,
   buildArchiveConfirmedMessage,

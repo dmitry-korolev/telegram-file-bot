@@ -65,7 +65,7 @@ function createQueuedTelegramSender(options) {
 }
 
 function normalizeIntervalMs(value) {
-  return Number.isFinite(value) && value >= 0 ? value : 500;
+  return Number.isFinite(value) && value >= 0 ? value : 250;
 }
 
 function delay(ms, setTimeoutFn) {
