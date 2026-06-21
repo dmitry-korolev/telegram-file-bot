@@ -15,6 +15,7 @@ const {
   buildQueueReplyRequiredMessage,
   buildQueueReturnConfirmedMessage,
   buildQueueSummaryMessage,
+  buildRetryReplyRequiredMessage,
   buildSearchArchiveSummaryMessage,
   buildSearchContextExpiredMessage,
   buildSearchQueueSummaryMessage,
@@ -108,6 +109,14 @@ function createTelegramUpdateHandler(dependencies) {
       };
     }
 
+    return processMessage(message, {
+      handleCommands: true,
+      updateId: update && update.update_id
+    });
+  }
+
+  async function processMessage(message, options) {
+    const normalizedOptions = options || {};
     const deduplicationKeys = await collectDeduplicationKeys(message);
     const processedMessage = processIncomingMessage(message, {
       authorizedUserIds,
@@ -117,7 +126,7 @@ function createTelegramUpdateHandler(dependencies) {
 
     if (!processedMessage.accepted) {
       logger.log('message rejected', {
-        updateId: update && update.update_id,
+        updateId: normalizedOptions.updateId,
         reason: processedMessage.reason,
         chatId: message.chat && message.chat.id,
         messageId: message.message_id
@@ -133,11 +142,21 @@ function createTelegramUpdateHandler(dependencies) {
     }
 
     if (processedMessage.attachments.length === 0) {
+      if (normalizedOptions.handleCommands === false) {
+        return {
+          accepted: true,
+          reason: 'retry_no_supported_attachments',
+          files: [],
+          deleteMessageCalled: false,
+          sendMessageCalled: false
+        };
+      }
+
       return handleMessageWithoutSupportedAttachments(message);
     }
 
     logger.log('supported attachments found', {
-      updateId: update && update.update_id,
+      updateId: normalizedOptions.updateId,
       chatId: message.chat && message.chat.id,
       messageId: message.message_id,
       attachmentCount: processedMessage.attachments.length,
@@ -250,6 +269,10 @@ function createTelegramUpdateHandler(dependencies) {
 
     if (commandName === '/queue') {
       return handleQueueReturnCommand(message);
+    }
+
+    if (commandName === '/retry') {
+      return handleRetryCommand(message);
     }
 
     if (commandName === '/show_archive') {
@@ -467,6 +490,46 @@ function createTelegramUpdateHandler(dependencies) {
       files: [],
       deleteMessageCalled: false,
       sendMessageCalled: false
+    };
+  }
+
+  async function handleRetryCommand(message) {
+    const retryMessage = message.reply_to_message;
+
+    if (!retryMessage) {
+      return sendRetryReplyRequiredMessage(message, 'retry_reply_required');
+    }
+
+    const result = await processMessage(retryMessage, {
+      handleCommands: false
+    });
+
+    if (result.reason === 'retry_no_supported_attachments') {
+      return sendRetryReplyRequiredMessage(message, 'retry_no_supported_attachments');
+    }
+
+    if (result.accepted) {
+      result.reason = `retry_${result.reason}`;
+    }
+
+    return result;
+  }
+
+  async function sendRetryReplyRequiredMessage(message, reason) {
+    const text = buildRetryReplyRequiredMessage();
+
+    await deps.messageSender.sendMessage({
+      chatId: message.chat && message.chat.id,
+      text
+    });
+
+    return {
+      accepted: true,
+      reason,
+      files: [],
+      deleteMessageCalled: false,
+      sendMessageCalled: true,
+      responseText: text
     };
   }
 

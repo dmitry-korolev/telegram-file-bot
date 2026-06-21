@@ -29,6 +29,12 @@ async function runTests() {
   await testUnknownSizeFilesUseManualQueueStatus();
   await testTextMessageWithoutAttachmentsIsDeleted();
   await testCommandMessageWithoutAttachmentsIsNotDeleted();
+  await testRetryCommandRequiresReply();
+  await testRetryCommandRequiresSupportedReply();
+  await testRetryCommandProcessesRepliedDocument();
+  await testRetryCommandReportsDuplicateRepliedDocument();
+  await testRetryCommandRetriesFailedRepliedDocument();
+  await testRetryCommandRejectsUnauthorizedRepliedMessage();
   await testProcessingSendsSingleFileResponse();
   await testProcessingSendsSeparateFileResponses();
   await testProcessingResponseDoesNotWaitForQueuedSend();
@@ -414,6 +420,158 @@ async function testCommandMessageWithoutAttachmentsIsNotDeleted() {
   assert.strictEqual(result.deleteMessageCalled, false);
   assert.deepStrictEqual(deps.messageDeleter.calls, []);
   assert.strictEqual(deps.messageSender.calls.length, 1);
+}
+
+async function testRetryCommandRequiresReply() {
+  const deps = createMockDependencies();
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 60,
+    message: createMessage({
+      text: '/retry'
+    })
+  });
+
+  assert.strictEqual(result.reason, 'retry_reply_required');
+  assert.strictEqual(result.deleteMessageCalled, false);
+  assert.deepStrictEqual(deps.messageDeleter.calls, []);
+  assert.strictEqual(deps.messageSender.calls.length, 1);
+  assert.strictEqual(deps.messageSender.calls[0].text, 'Отправьте /retry в ответ на сообщение с файлом.');
+}
+
+async function testRetryCommandRequiresSupportedReply() {
+  const deps = createMockDependencies();
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 61,
+    message: createMessage({
+      text: '/retry',
+      reply_to_message: createMessage({
+        message_id: 1002,
+        text: 'hello'
+      })
+    })
+  });
+
+  assert.strictEqual(result.reason, 'retry_no_supported_attachments');
+  assert.strictEqual(result.deleteMessageCalled, false);
+  assert.deepStrictEqual(deps.downloader.calls, []);
+  assert.deepStrictEqual(deps.messageDeleter.calls, []);
+  assert.strictEqual(deps.messageSender.calls.length, 1);
+  assert.strictEqual(deps.messageSender.calls[0].text, 'Отправьте /retry в ответ на сообщение с файлом.');
+}
+
+async function testRetryCommandProcessesRepliedDocument() {
+  const deps = createMockDependencies();
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 62,
+    message: createMessage({
+      message_id: 2002,
+      text: '/retry',
+      reply_to_message: createMessage({
+        message_id: 1002,
+        document: createTelegramFile('doc-retry', 'uniq-doc-retry', 1024, {
+          file_name: 'retry.txt'
+        })
+      })
+    })
+  });
+
+  assert.strictEqual(result.reason, 'retry_supported_attachments_found');
+  assert.strictEqual(result.files[0].status, 'downloaded');
+  assert.strictEqual(deps.downloader.calls.length, 1);
+  assert.strictEqual(deps.downloader.calls[0].file_unique_id, 'uniq-doc-retry');
+  assert.strictEqual(deps.fileRepository.records[0].message_id, 1002);
+  assert.strictEqual(deps.messageDeleter.calls.length, 1);
+  assert.deepStrictEqual(deps.messageDeleter.calls[0], {
+    chatId: 5001,
+    messageId: 1002
+  });
+  assert.strictEqual(deps.messageSender.calls.length, 1);
+  assert.strictEqual(deps.messageSender.calls[0].text, 'Файл "retry.txt" скачан: /tmp/doc-retry');
+}
+
+async function testRetryCommandReportsDuplicateRepliedDocument() {
+  const deps = createMockDependencies({
+    existingFileUniqueIds: ['uniq-retry-duplicate']
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 63,
+    message: createMessage({
+      text: '/retry',
+      reply_to_message: createMessage({
+        message_id: 1003,
+        document: createTelegramFile('doc-duplicate', 'uniq-retry-duplicate', 1024)
+      })
+    })
+  });
+
+  assert.strictEqual(result.reason, 'retry_supported_attachments_found');
+  assert.strictEqual(result.files[0].status, 'duplicate_skipped');
+  assert.deepStrictEqual(deps.downloader.calls, []);
+  assert.deepStrictEqual(deps.fileRepository.records, []);
+  assert.strictEqual(deps.messageDeleter.calls.length, 1);
+  assert.strictEqual(deps.messageSender.calls[0].text, 'Файл "file" уже был раньше.');
+}
+
+async function testRetryCommandRetriesFailedRepliedDocument() {
+  const deps = createMockDependencies({
+    records: [
+      createRepositoryRecord({
+        file_id: 'doc-failed',
+        file_unique_id: 'uniq-retry-failed-reply',
+        status: 'download_failed',
+        error_code: 'download_failed'
+      })
+    ]
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 64,
+    message: createMessage({
+      text: '/retry',
+      reply_to_message: createMessage({
+        message_id: 1004,
+        document: createTelegramFile('doc-retry-after-failed', 'uniq-retry-failed-reply', 1024)
+      })
+    })
+  });
+
+  assert.strictEqual(result.reason, 'retry_supported_attachments_found');
+  assert.strictEqual(result.files[0].status, 'downloaded');
+  assert.strictEqual(deps.downloader.calls.length, 1);
+  assert.strictEqual(deps.fileRepository.records.length, 2);
+  assert.strictEqual(deps.fileRepository.records[1].status, 'downloaded');
+}
+
+async function testRetryCommandRejectsUnauthorizedRepliedMessage() {
+  const deps = createMockDependencies();
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 65,
+    message: createMessage({
+      text: '/retry',
+      reply_to_message: createMessage({
+        message_id: 1005,
+        from: { id: 999 },
+        document: createTelegramFile('doc-unauthorized', 'uniq-retry-unauthorized', 1024)
+      })
+    })
+  });
+
+  assert.strictEqual(result.accepted, false);
+  assert.strictEqual(result.reason, 'unauthorized_user');
+  assert.deepStrictEqual(deps.downloader.calls, []);
+  assert.deepStrictEqual(deps.messageDeleter.calls, []);
+  assert.deepStrictEqual(deps.messageSender.calls, []);
 }
 
 async function testProcessingSendsSingleFileResponse() {

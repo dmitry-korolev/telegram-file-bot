@@ -16,6 +16,7 @@ function testBotCommandsIncludePublicCommands() {
       'show_queue',
       'search_queue',
       'queue',
+      'retry',
       'show_archive',
       'search_archive',
       'archive',

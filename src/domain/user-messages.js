@@ -233,6 +233,10 @@ function buildQueueReturnConfirmedMessage() {
   return 'Файл возвращен в очередь.';
 }
 
+function buildRetryReplyRequiredMessage() {
+  return 'Отправьте /retry в ответ на сообщение с файлом.';
+}
+
 function buildClearQueuePrompt() {
   return 'Очистить очередь больших файлов? Это действие пометит текущие записи очереди как удаленные пользователем.';
 }
@@ -328,6 +332,7 @@ module.exports = {
   buildQueueReplyRequiredMessage,
   buildQueueFileNotFoundMessage,
   buildQueueReturnConfirmedMessage,
+  buildRetryReplyRequiredMessage,
   buildClearQueuePrompt,
   buildClearQueueConfirmedMessage,
   buildProcessingResponse,

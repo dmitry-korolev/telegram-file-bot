@@ -14,6 +14,10 @@ const BOT_COMMANDS = [
     description: 'Вернуть файл в очередь'
   },
   {
+    command: 'retry',
+    description: 'Повторить обработку сообщения'
+  },
+  {
     command: 'show_archive',
     description: 'Показать архив'
   },
