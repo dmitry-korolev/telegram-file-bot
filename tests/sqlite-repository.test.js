@@ -12,6 +12,7 @@ function runTests() {
   testCreateRecordPersistsMetadata();
   testFindByFileUniqueIdReturnsExistingRecord();
   testFindDeduplicationRecordIgnoresDownloadFailedRecords();
+  testFindFilesByMediaGroupReturnsChatGroupRecords();
   testPendingManualDownloadQueuePrioritizesPhotoAndVideo();
   testPendingManualDownloadQueueCanSortByLargestKnownSize();
   testPendingManualDownloadQueueCanSortBySmallestKnownSize();
@@ -105,6 +106,47 @@ function testFindDeduplicationRecordIgnoresDownloadFailedRecords() {
     assert.ok(found);
     assert.strictEqual(found.file_id, 'downloaded-1');
     assert.strictEqual(found.status, 'downloaded');
+  });
+}
+
+function testFindFilesByMediaGroupReturnsChatGroupRecords() {
+  withRepository((repository) => {
+    repository.create(createRecord({
+      message_id: 1001,
+      media_group_id: 'album-1',
+      file_id: 'photo-1',
+      file_unique_id: 'photo-unique-1',
+      file_kind: 'photo'
+    }));
+    repository.create(createRecord({
+      message_id: 1002,
+      media_group_id: 'album-1',
+      file_id: 'photo-2',
+      file_unique_id: 'photo-unique-2',
+      file_kind: 'photo'
+    }));
+    repository.create(createRecord({
+      chat_id: 6001,
+      message_id: 1003,
+      media_group_id: 'album-1',
+      file_id: 'other-chat-photo',
+      file_unique_id: 'other-chat-photo-unique',
+      file_kind: 'photo'
+    }));
+    repository.create(createRecord({
+      message_id: 1004,
+      media_group_id: 'album-2',
+      file_id: 'other-album-photo',
+      file_unique_id: 'other-album-photo-unique',
+      file_kind: 'photo'
+    }));
+
+    const records = repository.findFilesByMediaGroup(5001, 'album-1');
+
+    assert.deepStrictEqual(
+      records.map((record) => record.file_id),
+      ['photo-1', 'photo-2']
+    );
   });
 }
 

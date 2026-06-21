@@ -34,6 +34,7 @@ async function runTests() {
   await testRetryCommandProcessesRepliedDocument();
   await testRetryCommandReportsDuplicateRepliedDocument();
   await testRetryCommandRetriesFailedRepliedDocument();
+  await testRetryCommandProcessesKnownMediaGroupRecords();
   await testRetryCommandRejectsUnauthorizedRepliedMessage();
   await testProcessingSendsSingleFileResponse();
   await testProcessingSendsSeparateFileResponses();
@@ -549,6 +550,71 @@ async function testRetryCommandRetriesFailedRepliedDocument() {
   assert.strictEqual(deps.downloader.calls.length, 1);
   assert.strictEqual(deps.fileRepository.records.length, 2);
   assert.strictEqual(deps.fileRepository.records[1].status, 'downloaded');
+}
+
+async function testRetryCommandProcessesKnownMediaGroupRecords() {
+  const deps = createMockDependencies({
+    records: [
+      createRepositoryRecord({
+        id: 10,
+        message_id: 2001,
+        media_group_id: 'album-retry',
+        file_id: 'photo-downloaded',
+        file_unique_id: 'uniq-album-downloaded',
+        file_name: 'photo-downloaded.jpg',
+        file_kind: 'photo',
+        file_size: 1024,
+        status: 'downloaded',
+        local_path: '/tmp/photo-downloaded.jpg'
+      }),
+      createRepositoryRecord({
+        id: 11,
+        message_id: 2002,
+        media_group_id: 'album-retry',
+        file_id: 'photo-failed',
+        file_unique_id: 'uniq-album-failed',
+        file_name: 'photo-failed.jpg',
+        file_kind: 'photo',
+        file_size: 1024,
+        status: 'download_failed',
+        error_code: 'download_failed'
+      })
+    ]
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 66,
+    message: createMessage({
+      text: '/retry',
+      reply_to_message: createMessage({
+        message_id: 2002,
+        media_group_id: 'album-retry',
+        photo: [
+          createTelegramFile('photo-failed', 'uniq-album-failed', 1024)
+        ]
+      })
+    })
+  });
+
+  assert.strictEqual(result.reason, 'retry_media_group_processed');
+  assert.deepStrictEqual(
+    result.files.map((file) => file.status),
+    ['duplicate_skipped', 'downloaded']
+  );
+  assert.strictEqual(deps.downloader.calls.length, 1);
+  assert.strictEqual(deps.downloader.calls[0].file_unique_id, 'uniq-album-failed');
+  assert.deepStrictEqual(
+    deps.messageDeleter.calls.map((call) => call.messageId),
+    [2001, 2002]
+  );
+  assert.deepStrictEqual(
+    deps.messageSender.calls.map((call) => call.text),
+    [
+      'Файл "photo-downloaded.jpg" уже был раньше.',
+      'Файл "photo-failed.jpg" скачан: /tmp/photo-failed'
+    ]
+  );
 }
 
 async function testRetryCommandRejectsUnauthorizedRepliedMessage() {
@@ -1336,6 +1402,17 @@ function createMockDependencies(options) {
       return this.records.find((record) => (
         record.file_unique_id === fileUniqueId && record.status !== 'download_failed'
       )) || null;
+    },
+    async findFilesByMediaGroup(chatId, mediaGroupId) {
+      return this.records
+        .filter((record) => record.chat_id === chatId && record.media_group_id === mediaGroupId)
+        .sort((left, right) => {
+          if (left.message_id !== right.message_id) {
+            return left.message_id - right.message_id;
+          }
+
+          return left.id - right.id;
+        });
     },
     async create(record) {
       const created = Object.assign({ id: this.records.length + 1 }, record);

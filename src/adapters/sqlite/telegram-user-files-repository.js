@@ -13,6 +13,7 @@ function createTelegramUserFilesRepository(sqliteClient) {
     create,
     findByFileUniqueId,
     findDeduplicationRecordByFileUniqueId,
+    findFilesByMediaGroup,
     getPendingManualDownloadQueue,
     getPotentialDuplicateQueueGroup,
     getPotentialDuplicateQueueGroupSummary,
@@ -207,6 +208,20 @@ function createTelegramUserFilesRepository(sqliteClient) {
     `);
 
     return rows[0] || null;
+  }
+
+  function findFilesByMediaGroup(chatId, mediaGroupId) {
+    if (!Number.isFinite(chatId) || !mediaGroupId) {
+      return [];
+    }
+
+    return sqliteClient.query(`
+      SELECT *
+      FROM telegram_user_files
+      WHERE chat_id = ${toSqlValue(chatId)}
+        AND media_group_id = ${toSqlValue(mediaGroupId)}
+      ORDER BY message_id ASC, id ASC;
+    `);
   }
 
   function getPendingManualDownloadQueue(options) {

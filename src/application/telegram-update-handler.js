@@ -1,7 +1,7 @@
 'use strict';
 
 const { processIncomingMessage } = require('./process-message');
-const { DEFAULT_SMALL_FILE_LIMIT_BYTES } = require('../domain/file-size');
+const { DEFAULT_SMALL_FILE_LIMIT_BYTES, classifyFileSize } = require('../domain/file-size');
 const {
   buildArchiveConfirmedMessage,
   buildArchiveFileNotFoundMessage,
@@ -500,6 +500,18 @@ function createTelegramUpdateHandler(dependencies) {
       return sendRetryReplyRequiredMessage(message, 'retry_reply_required');
     }
 
+    if (retryMessage.media_group_id && typeof deps.fileRepository.findFilesByMediaGroup === 'function') {
+      const groupRecords = await deps.fileRepository.findFilesByMediaGroup(
+        retryMessage.chat && retryMessage.chat.id,
+        retryMessage.media_group_id
+      );
+      const selectedRecords = selectRetryMediaGroupRecords(groupRecords);
+
+      if (selectedRecords.length > 1) {
+        return retryMediaGroupFromRecords(message, retryMessage, selectedRecords);
+      }
+    }
+
     const result = await processMessage(retryMessage, {
       handleCommands: false
     });
@@ -513,6 +525,139 @@ function createTelegramUpdateHandler(dependencies) {
     }
 
     return result;
+  }
+
+  async function retryMediaGroupFromRecords(commandMessage, sourceMessage, records) {
+    const files = [];
+
+    for (const record of records) {
+      files.push(await processAttachment(await buildRetryAttachmentFromRecord(record)));
+    }
+
+    let deleteMessageCalled = false;
+    let deleteMessageError = null;
+
+    if (!hasProcessingFailure(files)) {
+      deleteMessageCalled = true;
+
+      try {
+        await deleteMediaGroupSourceMessages(sourceMessage.chat && sourceMessage.chat.id, records);
+      } catch (error) {
+        deleteMessageError = error;
+        logger.error('retry media group source telegram messages delete failed', {
+          chatId: sourceMessage.chat && sourceMessage.chat.id,
+          mediaGroupId: sourceMessage.media_group_id,
+          error
+        });
+      }
+    }
+
+    if (deleteMessageError) {
+      await persistDeleteMessageFailure(files, deleteMessageError);
+    }
+
+    const processingResponse = await sendProcessingResponses(commandMessage, files);
+
+    return {
+      accepted: true,
+      reason: 'retry_media_group_processed',
+      files,
+      deleteMessageCalled,
+      deleteMessageError,
+      sendMessageCalled: processingResponse.sendMessageCalled,
+      sendMessageError: processingResponse.sendMessageError,
+      responseText: processingResponse.responseText,
+      responseTexts: processingResponse.responseTexts
+    };
+  }
+
+  async function buildRetryAttachmentFromRecord(record) {
+    const existingRecord = record.file_unique_id && typeof deps.fileRepository.findDeduplicationRecordByFileUniqueId === 'function'
+      ? await deps.fileRepository.findDeduplicationRecordByFileUniqueId(record.file_unique_id)
+      : null;
+
+    return {
+      file_kind: record.file_kind,
+      file_id: record.file_id,
+      file_unique_id: record.file_unique_id,
+      file_name: record.file_name,
+      mime_type: record.mime_type,
+      file_size: record.file_size,
+      message_id: record.message_id,
+      message_date: toUnixTimestamp(record.received_at || record.created_at),
+      media_group_id: record.media_group_id || null,
+      chat_id: record.chat_id,
+      user_id: record.authorized_user_id,
+      deduplicationKey: record.file_unique_id,
+      isDuplicate: Boolean(existingRecord),
+      sizeCategory: classifyFileSize(record.file_size, smallFileLimitBytes)
+    };
+  }
+
+  async function deleteMediaGroupSourceMessages(chatId, records) {
+    const messageIds = Array.from(new Set(records
+      .map((record) => record.message_id)
+      .filter((messageId) => Number.isFinite(messageId))));
+
+    for (const messageId of messageIds) {
+      logger.log('deleting retry media group source telegram message', {
+        chatId,
+        messageId
+      });
+      await deps.messageDeleter.deleteMessage({
+        chatId,
+        messageId
+      });
+    }
+  }
+
+  function selectRetryMediaGroupRecords(records) {
+    const recordsByUniqueId = new Map();
+
+    for (const record of records || []) {
+      if (!record || !record.file_unique_id) {
+        continue;
+      }
+
+      const existing = recordsByUniqueId.get(record.file_unique_id);
+
+      if (!existing || shouldReplaceRetryMediaGroupRecord(existing, record)) {
+        recordsByUniqueId.set(record.file_unique_id, record);
+      }
+    }
+
+    return Array.from(recordsByUniqueId.values()).sort((left, right) => {
+      const leftMessageId = Number.isFinite(left.message_id) ? left.message_id : 0;
+      const rightMessageId = Number.isFinite(right.message_id) ? right.message_id : 0;
+
+      if (leftMessageId !== rightMessageId) {
+        return leftMessageId - rightMessageId;
+      }
+
+      return (left.id || 0) - (right.id || 0);
+    });
+  }
+
+  function shouldReplaceRetryMediaGroupRecord(current, candidate) {
+    if (current.status === 'download_failed' && candidate.status !== 'download_failed') {
+      return true;
+    }
+
+    if (current.status !== 'download_failed' && candidate.status === 'download_failed') {
+      return false;
+    }
+
+    return (candidate.id || 0) > (current.id || 0);
+  }
+
+  function toUnixTimestamp(value) {
+    const time = new Date(value || '').getTime();
+
+    if (!Number.isFinite(time)) {
+      return null;
+    }
+
+    return Math.floor(time / 1000);
   }
 
   async function sendRetryReplyRequiredMessage(message, reason) {
