@@ -41,6 +41,8 @@ async function runTests() {
   await testProcessingResponseDoesNotWaitForQueuedSend();
   await testProcessingResponseLogsAsyncSendFailure();
   await testDeleteMessageFailureIsRecordedWithoutStatusOverwrite();
+  await testDeleteMessageRetriesTransientFailure();
+  await testDeleteMessageNotFoundIsTreatedAsDeleted();
   await testMediaGroupSendsImmediateFileResponses();
   await testSeparateMediaGroupsSendImmediateResponses();
   await testShowQueueCommandShowsQueue();
@@ -762,6 +764,50 @@ async function testDeleteMessageFailureIsRecordedWithoutStatusOverwrite() {
   assert.strictEqual(deps.fileRepository.events.some((event) => event.event_type === 'delete_message_failed'), true);
 }
 
+async function testDeleteMessageRetriesTransientFailure() {
+  const transientError = new Error('read ECONNRESET');
+  transientError.code = 'ECONNRESET';
+  const deps = createMockDependencies({
+    deleteFailures: [transientError]
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 67,
+    message: createMessage({
+      document: createTelegramFile('doc-small', 'uniq-doc-delete-retry', 1024)
+    })
+  });
+
+  assert.strictEqual(result.deleteMessageCalled, true);
+  assert.strictEqual(result.deleteMessageError, null);
+  assert.strictEqual(deps.messageDeleter.calls.length, 2);
+  assert.strictEqual(deps.fileRepository.records[0].error_code, null);
+  assert.strictEqual(deps.fileRepository.events.some((event) => event.event_type === 'delete_message_failed'), false);
+}
+
+async function testDeleteMessageNotFoundIsTreatedAsDeleted() {
+  const deps = createMockDependencies({
+    deleteFailures: [
+      new Error('Telegram API deleteMessage failed: Bad Request: message to delete not found')
+    ]
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 68,
+    message: createMessage({
+      document: createTelegramFile('doc-small', 'uniq-doc-delete-not-found', 1024)
+    })
+  });
+
+  assert.strictEqual(result.deleteMessageCalled, true);
+  assert.strictEqual(result.deleteMessageError, null);
+  assert.strictEqual(deps.messageDeleter.calls.length, 1);
+  assert.strictEqual(deps.fileRepository.records[0].error_code, null);
+  assert.strictEqual(deps.fileRepository.events.some((event) => event.event_type === 'delete_message_failed'), false);
+}
+
 async function testMediaGroupSendsImmediateFileResponses() {
   const deps = createMockDependencies();
   const handler = createTelegramUpdateHandler(deps);
@@ -1363,6 +1409,9 @@ function createMockDependencies(options) {
   const existingFileUniqueIds = new Set(normalizedOptions.existingFileUniqueIds || []);
   const failingFileIds = new Set(normalizedOptions.failingFileIds || []);
   const failingDownloadFileIds = new Set(normalizedOptions.failingDownloadFileIds || []);
+  const deleteFailures = Array.isArray(normalizedOptions.deleteFailures)
+    ? normalizedOptions.deleteFailures.slice()
+    : [];
   let queuePosition = 0;
   const pendingMessageSends = [];
 
@@ -1789,6 +1838,10 @@ function createMockDependencies(options) {
     calls: [],
     async deleteMessage(payload) {
       this.calls.push(payload);
+
+      if (deleteFailures.length > 0) {
+        throw deleteFailures.shift();
+      }
 
       if (normalizedOptions.failDeleteMessage) {
         throw new Error('Cannot delete message');

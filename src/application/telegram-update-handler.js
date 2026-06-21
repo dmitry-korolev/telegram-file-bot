@@ -47,6 +47,7 @@ const CALLBACK_SEARCH_ARCHIVE_NEXT_PREFIX = 'search_archive_next:';
 const CALLBACK_SEARCH_ARCHIVE_LARGEST_PREFIX = 'search_archive_largest:';
 const CALLBACK_SEARCH_ARCHIVE_SMALLEST_PREFIX = 'search_archive_smallest:';
 const MANUAL_DOWNLOAD_BATCH_SIZE = 10;
+const DELETE_MESSAGE_MAX_ATTEMPTS = 3;
 
 function createTelegramUpdateHandler(dependencies) {
   const deps = dependencies || {};
@@ -180,7 +181,7 @@ function createTelegramUpdateHandler(dependencies) {
           chatId: message.chat && message.chat.id,
           messageId: message.message_id
         });
-        await deps.messageDeleter.deleteMessage({
+        await deleteTelegramMessage({
           chatId: message.chat && message.chat.id,
           messageId: message.message_id
         });
@@ -221,7 +222,7 @@ function createTelegramUpdateHandler(dependencies) {
     let deleteMessageError = null;
 
     try {
-      await deps.messageDeleter.deleteMessage({
+      await deleteTelegramMessage({
         chatId: message.chat && message.chat.id,
         messageId: message.message_id
       });
@@ -598,17 +599,86 @@ function createTelegramUpdateHandler(dependencies) {
     const messageIds = Array.from(new Set(records
       .map((record) => record.message_id)
       .filter((messageId) => Number.isFinite(messageId))));
+    const deleteErrors = [];
 
     for (const messageId of messageIds) {
       logger.log('deleting retry media group source telegram message', {
         chatId,
         messageId
       });
-      await deps.messageDeleter.deleteMessage({
-        chatId,
-        messageId
-      });
+      try {
+        await deleteTelegramMessage({
+          chatId,
+          messageId
+        });
+      } catch (error) {
+        deleteErrors.push(error);
+      }
     }
+
+    if (deleteErrors.length > 0) {
+      throw deleteErrors[0];
+    }
+  }
+
+  async function deleteTelegramMessage(payload) {
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= DELETE_MESSAGE_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        await deps.messageDeleter.deleteMessage(payload);
+        return {
+          deleted: true,
+          attempts: attempt
+        };
+      } catch (error) {
+        if (isMessageAlreadyDeletedError(error)) {
+          logger.log('telegram message already deleted', {
+            chatId: payload && payload.chatId,
+            messageId: payload && payload.messageId,
+            attempt
+          });
+          return {
+            deleted: true,
+            alreadyDeleted: true,
+            attempts: attempt
+          };
+        }
+
+        lastError = error;
+
+        if (attempt < DELETE_MESSAGE_MAX_ATTEMPTS && isRetryableDeleteMessageError(error)) {
+          logger.error('telegram message delete attempt failed; retrying', {
+            chatId: payload && payload.chatId,
+            messageId: payload && payload.messageId,
+            attempt,
+            error
+          });
+          continue;
+        }
+
+        throw error;
+      }
+    }
+
+    throw lastError;
+  }
+
+  function isRetryableDeleteMessageError(error) {
+    const code = error && error.code ? String(error.code) : '';
+    const message = getErrorMessage(error).toLowerCase();
+
+    return code === 'ECONNRESET' ||
+      code === 'ETIMEDOUT' ||
+      code === 'ECONNREFUSED' ||
+      code === 'EAI_AGAIN' ||
+      message.includes('socket hang up') ||
+      message.includes('timeout') ||
+      message.includes('network');
+  }
+
+  function isMessageAlreadyDeletedError(error) {
+    return getErrorMessage(error).toLowerCase().includes('message to delete not found');
   }
 
   function selectRetryMediaGroupRecords(records) {
