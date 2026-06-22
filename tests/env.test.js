@@ -10,6 +10,7 @@ function runTests() {
   testParseEnvUnquotesValues();
   testConfigParsesAuthorizedUserIds();
   testConfigParsesOutgoingMessageInterval();
+  testConfigParsesDownloadRetryOptions();
 }
 
 function testParseEnvReadsSimpleValues() {
@@ -41,6 +42,19 @@ function testConfigParsesOutgoingMessageInterval() {
 
   assert.strictEqual(defaults.telegramOutgoingMessageIntervalMs, 250);
   assert.strictEqual(configured.telegramOutgoingMessageIntervalMs, 750);
+}
+
+function testConfigParsesDownloadRetryOptions() {
+  const defaults = createConfig({});
+  const configured = createConfig({
+    DOWNLOAD_MAX_ATTEMPTS: '7',
+    DOWNLOAD_RETRY_DELAY_MS: '250'
+  });
+
+  assert.strictEqual(defaults.downloadMaxAttempts, 20);
+  assert.strictEqual(defaults.downloadRetryDelayMs, 1000);
+  assert.strictEqual(configured.downloadMaxAttempts, 7);
+  assert.strictEqual(configured.downloadRetryDelayMs, 250);
 }
 
 function testParseEnvUnquotesValues() {

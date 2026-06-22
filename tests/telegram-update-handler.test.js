@@ -22,6 +22,8 @@ async function runTests() {
   await testSecondAuthorizedUserIsAccepted();
   await testSmallFilesUseDownloaderAndDownloadedRecord();
   await testSmallDownloadFailureCreatesFailedRecordAndResponds();
+  await testSmallDownloadRetriesTransientFailure();
+  await testSmallDownloadRetriesUntilFinalFailure();
   await testDownloadFailedRecordDoesNotBlockRetry();
   await testSuccessfulRetryBlocksLaterDuplicates();
   await testLargeFilesAreQueuedWithoutDownloader();
@@ -258,6 +260,9 @@ async function testSmallDownloadFailureCreatesFailedRecordAndResponds() {
 
   assert.strictEqual(result.accepted, true);
   assert.strictEqual(result.files[0].status, 'download_failed');
+  assert.strictEqual(deps.downloader.calls.length, 20);
+  assert.strictEqual(deps.downloadRetryDelays.length, 19);
+  assert.strictEqual(deps.downloadRetryDelays.every((delayMs) => delayMs === 1000), true);
   assert.strictEqual(deps.fileRepository.records[0].status, 'download_failed');
   assert.strictEqual(deps.fileRepository.records[0].error_code, 'download_failed');
   assert.strictEqual(deps.fileRepository.records[0].error_message, 'Cannot download doc-small');
@@ -266,6 +271,58 @@ async function testSmallDownloadFailureCreatesFailedRecordAndResponds() {
   assert.strictEqual(deps.messageDeleter.calls.length, 0);
   assert.strictEqual(deps.messageSender.calls[0].text, 'Файл "file" не удалось скачать.');
   assert.strictEqual(deps.fileRepository.events.some((event) => event.event_type === 'download_failed'), true);
+}
+
+async function testSmallDownloadRetriesTransientFailure() {
+  const deps = createMockDependencies({
+    downloadFailuresByFileId: {
+      'doc-small': 1
+    },
+    downloadRetryDelayMs: 1
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 65,
+    message: createMessage({
+      document: createTelegramFile('doc-small', 'uniq-doc-small-transient', DEFAULT_SMALL_FILE_LIMIT_BYTES)
+    })
+  });
+
+  assert.strictEqual(result.files[0].status, 'downloaded');
+  assert.strictEqual(deps.downloader.calls.length, 2);
+  assert.deepStrictEqual(deps.downloadRetryDelays, [1]);
+  assert.strictEqual(deps.fileRepository.records.length, 1);
+  assert.strictEqual(deps.fileRepository.records[0].status, 'downloaded');
+  assert.strictEqual(deps.fileRepository.events.length, 1);
+  assert.strictEqual(deps.fileRepository.events[0].event_type, 'downloaded');
+  assert.strictEqual(deps.messageDeleter.calls.length, 1);
+}
+
+async function testSmallDownloadRetriesUntilFinalFailure() {
+  const deps = createMockDependencies({
+    failingDownloadFileIds: ['doc-small'],
+    downloadMaxAttempts: 3,
+    downloadRetryDelayMs: 1
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 67,
+    message: createMessage({
+      document: createTelegramFile('doc-small', 'uniq-doc-small-final-failure', DEFAULT_SMALL_FILE_LIMIT_BYTES)
+    })
+  });
+
+  assert.strictEqual(result.files[0].status, 'download_failed');
+  assert.strictEqual(deps.downloader.calls.length, 3);
+  assert.deepStrictEqual(deps.downloadRetryDelays, [1, 1]);
+  assert.strictEqual(deps.fileRepository.records.length, 1);
+  assert.strictEqual(deps.fileRepository.records[0].status, 'download_failed');
+  assert.strictEqual(deps.fileRepository.events.length, 1);
+  assert.strictEqual(deps.fileRepository.events[0].event_type, 'download_failed');
+  assert.strictEqual(result.deleteMessageCalled, false);
+  assert.strictEqual(deps.messageDeleter.calls.length, 0);
 }
 
 async function testDownloadFailedRecordDoesNotBlockRetry() {
@@ -1409,11 +1466,13 @@ function createMockDependencies(options) {
   const existingFileUniqueIds = new Set(normalizedOptions.existingFileUniqueIds || []);
   const failingFileIds = new Set(normalizedOptions.failingFileIds || []);
   const failingDownloadFileIds = new Set(normalizedOptions.failingDownloadFileIds || []);
+  const remainingDownloadFailuresByFileId = Object.assign({}, normalizedOptions.downloadFailuresByFileId || {});
   const deleteFailures = Array.isArray(normalizedOptions.deleteFailures)
     ? normalizedOptions.deleteFailures.slice()
     : [];
   let queuePosition = 0;
   const pendingMessageSends = [];
+  const downloadRetryDelays = [];
 
   const fileRepository = {
     records: normalizedOptions.records || [],
@@ -1826,6 +1885,11 @@ function createMockDependencies(options) {
     async download(attachment) {
       this.calls.push(attachment);
 
+      if (remainingDownloadFailuresByFileId[attachment.file_id] > 0) {
+        remainingDownloadFailuresByFileId[attachment.file_id] -= 1;
+        throw new Error(`Cannot download ${attachment.file_id}`);
+      }
+
       if (failingDownloadFileIds.has(attachment.file_id)) {
         throw new Error(`Cannot download ${attachment.file_id}`);
       }
@@ -1911,9 +1975,15 @@ function createMockDependencies(options) {
     statsImageRenderer,
     callbackResponder,
     pendingMessageSends,
+    downloadRetryDelays,
     nextQueuePosition: async () => {
       queuePosition += 1;
       return queuePosition;
+    },
+    downloadMaxAttempts: normalizedOptions.downloadMaxAttempts,
+    downloadRetryDelayMs: normalizedOptions.downloadRetryDelayMs,
+    downloadRetryDelay: async (ms) => {
+      downloadRetryDelays.push(ms);
     },
     logger: normalizedOptions.logger || { error() {} },
     now: () => '2026-05-16T10:00:00.000Z'

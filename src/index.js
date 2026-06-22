@@ -29,7 +29,9 @@ async function main() {
     smallFileLimitBytes: config.smallFileLimitBytes,
     telegramPollingTimeoutSeconds: config.telegramPollingTimeoutSeconds,
     telegramApiMinRequestIntervalMs: config.telegramApiMinRequestIntervalMs,
-    telegramOutgoingMessageIntervalMs: config.telegramOutgoingMessageIntervalMs
+    telegramOutgoingMessageIntervalMs: config.telegramOutgoingMessageIntervalMs,
+    downloadMaxAttempts: config.downloadMaxAttempts,
+    downloadRetryDelayMs: config.downloadRetryDelayMs
   });
 
   validateRuntimeConfig(config);
@@ -68,6 +70,8 @@ async function main() {
     statsImageRenderer,
     callbackResponder: telegramClient,
     nextQueuePosition: () => fileRepository.getNextQueuePosition(),
+    downloadMaxAttempts: config.downloadMaxAttempts,
+    downloadRetryDelayMs: config.downloadRetryDelayMs,
     logger
   });
   const pollingLoop = createTelegramPollingLoop({

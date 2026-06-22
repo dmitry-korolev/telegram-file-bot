@@ -48,6 +48,8 @@ const CALLBACK_SEARCH_ARCHIVE_LARGEST_PREFIX = 'search_archive_largest:';
 const CALLBACK_SEARCH_ARCHIVE_SMALLEST_PREFIX = 'search_archive_smallest:';
 const MANUAL_DOWNLOAD_BATCH_SIZE = 10;
 const DELETE_MESSAGE_MAX_ATTEMPTS = 3;
+const DEFAULT_DOWNLOAD_MAX_ATTEMPTS = 20;
+const DEFAULT_DOWNLOAD_RETRY_DELAY_MS = 1000;
 
 function createTelegramUpdateHandler(dependencies) {
   const deps = dependencies || {};
@@ -78,6 +80,9 @@ function createTelegramUpdateHandler(dependencies) {
 
   const authorizedUserIds = deps.authorizedUserIds || (deps.authorizedUserId === undefined ? [] : [deps.authorizedUserId]);
   const smallFileLimitBytes = deps.smallFileLimitBytes || DEFAULT_SMALL_FILE_LIMIT_BYTES;
+  const downloadMaxAttempts = normalizePositiveInteger(deps.downloadMaxAttempts, DEFAULT_DOWNLOAD_MAX_ATTEMPTS);
+  const downloadRetryDelayMs = normalizeNonNegativeInteger(deps.downloadRetryDelayMs, DEFAULT_DOWNLOAD_RETRY_DELAY_MS);
+  const downloadRetryDelay = typeof deps.downloadRetryDelay === 'function' ? deps.downloadRetryDelay : delay;
   const now = deps.now || (() => new Date().toISOString());
   const nextQueuePosition = deps.nextQueuePosition || createInMemoryQueuePosition();
   const logger = normalizeLogger(deps.logger || console);
@@ -1325,7 +1330,7 @@ function createTelegramUpdateHandler(dependencies) {
     let downloaded;
 
     try {
-      downloaded = await deps.downloader.download(attachment);
+      downloaded = await downloadAttachmentWithRetry(attachment);
     } catch (error) {
       logDownloadFailure(attachment, error);
 
@@ -1372,6 +1377,39 @@ function createTelegramUpdateHandler(dependencies) {
 
     await logFileEvent(result, 'downloaded');
     return result;
+  }
+
+  async function downloadAttachmentWithRetry(attachment) {
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= downloadMaxAttempts; attempt += 1) {
+      try {
+        return await deps.downloader.download(attachment);
+      } catch (error) {
+        lastError = error;
+
+        if (attempt >= downloadMaxAttempts) {
+          throw error;
+        }
+
+        logger.error('telegram file download attempt failed; retrying', {
+          fileId: attachment && attachment.file_id,
+          fileUniqueId: attachment && attachment.file_unique_id,
+          fileKind: attachment && attachment.file_kind,
+          attempt,
+          maxAttempts: downloadMaxAttempts,
+          retryDelayMs: downloadRetryDelayMs,
+          errorMessage: getErrorMessage(error),
+          error
+        });
+
+        if (downloadRetryDelayMs > 0) {
+          await downloadRetryDelay(downloadRetryDelayMs);
+        }
+      }
+    }
+
+    throw lastError;
   }
 
   async function processLargeAttachment(attachment) {
@@ -1566,6 +1604,14 @@ function normalizeNonNegativeInteger(value, fallback) {
   return Number.isInteger(value) && value >= 0 ? value : fallback;
 }
 
+function normalizePositiveInteger(value, fallback) {
+  return Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function getErrorMessage(error) {
   return error && error.message ? error.message : String(error || 'unknown_error');
 }
@@ -1591,5 +1637,7 @@ module.exports = {
   CALLBACK_SHOW_SMALLEST_ARCHIVE_FILES,
   CALLBACK_CONFIRM_CLEAR_QUEUE,
   CALLBACK_CANCEL_CLEAR_QUEUE,
+  DEFAULT_DOWNLOAD_MAX_ATTEMPTS,
+  DEFAULT_DOWNLOAD_RETRY_DELAY_MS,
   normalizeLogger
 };
