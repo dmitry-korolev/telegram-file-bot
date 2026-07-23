@@ -1133,15 +1133,24 @@ function createTelegramUpdateHandler(dependencies) {
   }
 
   async function sendQueuedFile(chatId, file) {
+    const payload = {
+      chatId,
+      fileId: file.file_id
+    };
+
+    if (file.author) {
+      payload.caption = file.author;
+    }
+
     if (file.file_kind === 'photo') {
-      return deps.fileSender.sendPhoto({ chatId, fileId: file.file_id });
+      return deps.fileSender.sendPhoto(payload);
     }
 
     if (file.file_kind === 'video') {
-      return deps.fileSender.sendVideo({ chatId, fileId: file.file_id });
+      return deps.fileSender.sendVideo(payload);
     }
 
-    return deps.fileSender.sendDocument({ chatId, fileId: file.file_id });
+    return deps.fileSender.sendDocument(payload);
   }
 
   async function recordSentFile(file, sentMessage, chatId, source) {
@@ -1264,6 +1273,7 @@ function createTelegramUpdateHandler(dependencies) {
       fileUniqueId: file.file_unique_id,
       fileKind: file.file_kind,
       fileName: file.file_name,
+      author: file.author || null,
       status: overrideStatus || file.status,
       record: file
     };
@@ -1305,6 +1315,7 @@ function createTelegramUpdateHandler(dependencies) {
         fileUniqueId: attachment.file_unique_id,
         fileKind: attachment.file_kind,
         fileName: attachment.file_name,
+        author: attachment.author,
         status: 'duplicate_skipped',
         record: null
       };
@@ -1348,6 +1359,7 @@ function createTelegramUpdateHandler(dependencies) {
         fileUniqueId: attachment.file_unique_id,
         fileKind: attachment.file_kind,
         fileName: attachment.file_name,
+        author: attachment.author,
         status: 'download_failed',
         errorCode: 'download_failed',
         errorMessage: getErrorMessage(error),
@@ -1371,6 +1383,7 @@ function createTelegramUpdateHandler(dependencies) {
       fileUniqueId: attachment.file_unique_id,
       fileKind: attachment.file_kind,
       fileName: attachment.file_name,
+      author: attachment.author,
       status: 'downloaded',
       record
     };
@@ -1426,6 +1439,7 @@ function createTelegramUpdateHandler(dependencies) {
       fileUniqueId: attachment.file_unique_id,
       fileKind: attachment.file_kind,
       fileName: attachment.file_name,
+      author: attachment.author,
       status: 'pending_manual_download',
       record
     };
@@ -1448,6 +1462,7 @@ function createTelegramUpdateHandler(dependencies) {
       fileUniqueId: attachment.file_unique_id,
       fileKind: attachment.file_kind,
       fileName: attachment.file_name,
+      author: attachment.author,
       status: 'pending_size_unknown',
       record
     };
@@ -1526,6 +1541,7 @@ function createTelegramUpdateHandler(dependencies) {
       file_id: attachment.file_id,
       file_unique_id: attachment.file_unique_id,
       file_name: attachment.file_name,
+      author: attachment.author || null,
       mime_type: attachment.mime_type,
       file_size: attachment.file_size,
       file_kind: attachment.file_kind,

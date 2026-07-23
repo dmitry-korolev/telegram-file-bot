@@ -12,6 +12,7 @@ function runTests() {
   testUnauthorizedUsersAreRejected();
   testAuthorizedUserListIsAccepted();
   testMessageDateIsCopiedToAttachments();
+  testCaptionAuthorIsCopiedToAttachments();
   testUnsupportedAttachmentsAreIgnored();
   testDeduplicationUsesFileUniqueId();
   testSmallAndLargeFileBoundaryUses20MbLimit();
@@ -34,6 +35,24 @@ function testMessageDateIsCopiedToAttachments() {
   });
 
   assert.strictEqual(result.attachments[0].message_date, 1778880600);
+}
+
+function testCaptionAuthorIsCopiedToAttachments() {
+  const message = createBaseMessage({
+    caption: '💎 Goblin Slayer (platinum)',
+    video: {
+      file_id: 'video-1',
+      file_unique_id: 'uniq-video-1',
+      file_size: 1024
+    }
+  });
+
+  const result = processIncomingMessage(message, {
+    authorizedUserId: 42,
+    knownDeduplicationKeys: new Set()
+  });
+
+  assert.strictEqual(result.attachments[0].author, 'Goblin Slayer');
 }
 
 function testAuthorizedUserListIsAccepted() {

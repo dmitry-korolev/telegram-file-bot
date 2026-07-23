@@ -76,24 +76,24 @@ function createTelegramClient(options) {
       });
     }
 
-    return callApi('sendPhoto', {
+    return callApi('sendPhoto', withOptionalCaption({
       chat_id: payload.chatId,
       photo: payload.fileId
-    });
+    }, payload.caption));
   }
 
   async function sendVideo(payload) {
-    return callApi('sendVideo', {
+    return callApi('sendVideo', withOptionalCaption({
       chat_id: payload.chatId,
       video: payload.fileId
-    });
+    }, payload.caption));
   }
 
   async function sendDocument(payload) {
-    return callApi('sendDocument', {
+    return callApi('sendDocument', withOptionalCaption({
       chat_id: payload.chatId,
       document: payload.fileId
-    });
+    }, payload.caption));
   }
 
   async function answerCallbackQuery(payload) {
@@ -375,6 +375,14 @@ function buildFileLogFields(file) {
     contentType: file && file.contentType,
     bytes: file && file.buffer ? file.buffer.length : null
   };
+}
+
+function withOptionalCaption(params, caption) {
+  if (typeof caption === 'string' && caption.length > 0) {
+    params.caption = caption;
+  }
+
+  return params;
 }
 
 function createSilentLogger() {

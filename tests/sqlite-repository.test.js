@@ -10,6 +10,7 @@ const { createTelegramUserFilesRepository } = require('../src/adapters/sqlite/te
 
 function runTests() {
   testCreateRecordPersistsMetadata();
+  testInitializeSchemaMigratesAuthorColumnIdempotently();
   testFindByFileUniqueIdReturnsExistingRecord();
   testFindDeduplicationRecordIgnoresDownloadFailedRecords();
   testFindFilesByMediaGroupReturnsChatGroupRecords();
@@ -48,6 +49,7 @@ function testCreateRecordPersistsMetadata() {
       file_id: 'doc-1',
       file_unique_id: 'unique-doc-1',
       file_name: 'report.pdf',
+      author: 'Dr Strange',
       file_kind: 'document',
       file_size: 25 * 1024 * 1024,
       queue_position: 1,
@@ -57,9 +59,91 @@ function testCreateRecordPersistsMetadata() {
     assert.ok(created.id > 0);
     assert.strictEqual(created.authorized_user_id, 42);
     assert.strictEqual(created.file_unique_id, 'unique-doc-1');
+    assert.strictEqual(created.author, 'Dr Strange');
     assert.strictEqual(created.deduplication_key, 'unique-doc-1');
     assert.strictEqual(created.status, 'pending_manual_download');
   });
+}
+
+function testInitializeSchemaMigratesAuthorColumnIdempotently() {
+  const databasePath = path.join(
+    os.tmpdir(),
+    `telegram-user-files-legacy-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.sqlite`
+  );
+
+  try {
+    const sqliteClient = createSqliteClient(databasePath);
+    sqliteClient.execute(`
+      CREATE TABLE telegram_user_files (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        authorized_user_id INTEGER NOT NULL,
+        chat_id INTEGER NOT NULL,
+        message_id INTEGER NOT NULL,
+        media_group_id TEXT,
+        file_id TEXT NOT NULL,
+        file_unique_id TEXT NOT NULL,
+        file_name TEXT,
+        mime_type TEXT,
+        file_size INTEGER,
+        file_kind TEXT NOT NULL,
+        deduplication_key TEXT NOT NULL,
+        local_path TEXT,
+        queue_position INTEGER,
+        status TEXT NOT NULL,
+        error_code TEXT,
+        error_message TEXT,
+        received_at TEXT NOT NULL,
+        downloaded_at TEXT,
+        shown_at TEXT,
+        download_confirmed_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      INSERT INTO telegram_user_files (
+        authorized_user_id,
+        chat_id,
+        message_id,
+        file_id,
+        file_unique_id,
+        file_kind,
+        deduplication_key,
+        status,
+        received_at,
+        created_at,
+        updated_at
+      ) VALUES (
+        42,
+        5001,
+        9001,
+        'legacy-file',
+        'legacy-unique',
+        'video',
+        'legacy-unique',
+        'pending_manual_download',
+        '2026-05-16T10:00:00.000Z',
+        '2026-05-16T10:00:00.000Z',
+        '2026-05-16T10:00:00.000Z'
+      );
+    `);
+    const repository = createTelegramUserFilesRepository(sqliteClient);
+
+    repository.initializeSchema();
+    repository.initializeSchema();
+
+    const columns = sqliteClient.query('PRAGMA table_info(telegram_user_files);');
+    const records = sqliteClient.query("SELECT file_unique_id, author FROM telegram_user_files WHERE file_unique_id = 'legacy-unique';");
+
+    assert.strictEqual(columns.filter((column) => column.name === 'author').length, 1);
+    assert.deepStrictEqual(records, [{
+      file_unique_id: 'legacy-unique',
+      author: null
+    }]);
+  } finally {
+    if (fs.existsSync(databasePath)) {
+      fs.unlinkSync(databasePath);
+    }
+  }
 }
 
 function testFindByFileUniqueIdReturnsExistingRecord() {
@@ -1069,6 +1153,7 @@ function createRecord(overrides) {
     file_id: 'file-1',
     file_unique_id: 'file-unique-1',
     file_name: 'file.bin',
+    author: null,
     mime_type: 'application/octet-stream',
     file_size: 25 * 1024 * 1024,
     file_kind: 'document',

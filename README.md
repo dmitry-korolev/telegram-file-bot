@@ -42,6 +42,8 @@ Unsupported attachments such as `audio`, `voice`, `sticker`, `animation`, and pl
 
 Small files up to `SMALL_FILE_LIMIT_BYTES` are downloaded automatically to `DOWNLOADS_DIR`. Files larger than the limit are saved to the shared manual-download queue.
 
+When the first caption line looks like `⭐ Dr Strange (VIP)` or `💎 Goblin Slayer (platinum)`, the bot stores the text between the emoji and level as the file author. A second line is optional and ignored during author recognition. Automatically downloaded `document`, `photo`, and `video` attachments with an author go to `DOWNLOADS_DIR/<author>/`; other files keep the date-based layout.
+
 Available commands:
 
 - `/show_queue` — show the shared queue summary: file count and total known size.
@@ -86,6 +88,8 @@ Manual download flow:
 5. If the queue still has files, press `Показать следующие вложения` again to receive the next batch.
 
 The bot prioritizes large `photo` and `video` files before `document` files.
+
+When a queued file has an author, that name is used as the file's only caption during manual delivery.
 
 ## Tests
 

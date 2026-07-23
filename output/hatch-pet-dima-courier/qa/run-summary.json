@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "run_dir": "/Users/dima/Documents/projects/tgdownloader/output/hatch-pet-dima-courier",
+  "spritesheet": "/Users/dima/Documents/projects/tgdownloader/output/hatch-pet-dima-courier/final/spritesheet.webp",
+  "validation": "/Users/dima/Documents/projects/tgdownloader/output/hatch-pet-dima-courier/final/validation.json",
+  "contact_sheet": "/Users/dima/Documents/projects/tgdownloader/output/hatch-pet-dima-courier/qa/contact-sheet.png",
+  "review": "/Users/dima/Documents/projects/tgdownloader/output/hatch-pet-dima-courier/qa/review.json",
+  "package": "/Users/dima/.codex/pets/dima-courier"
+}

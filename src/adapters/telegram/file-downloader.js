@@ -53,8 +53,9 @@ function createTelegramFileDownloader(options) {
   }
 
   function buildLocalPath(attachment, telegramFilePath) {
-    const dateDirectoryName = formatDateDirectoryName(attachment.message_date, now);
-    const targetDirectory = path.resolve(downloadsDir, dateDirectoryName);
+    const authorDirectoryName = sanitizeDirectoryName(attachment.author);
+    const directoryName = authorDirectoryName || formatDateDirectoryName(attachment.message_date, now);
+    const targetDirectory = path.resolve(downloadsDir, directoryName);
     const fileName = chooseLocalFileName(targetDirectory, attachment, telegramFilePath);
 
     return path.resolve(targetDirectory, fileName);
@@ -134,6 +135,23 @@ function sanitizeFileName(value) {
   return sanitized;
 }
 
+function sanitizeDirectoryName(value) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const sanitized = value
+    .normalize('NFC')
+    .replace(/[\/\\\u0000-\u001F\u007F]/gu, '_')
+    .trim();
+
+  if (!sanitized || sanitized === '.' || sanitized === '..') {
+    return null;
+  }
+
+  return sanitized;
+}
+
 function createSilentLogger() {
   return {
     log() {}
@@ -144,5 +162,6 @@ module.exports = {
   createTelegramFileDownloader,
   chooseLocalFileName,
   formatDateDirectoryName,
+  sanitizeDirectoryName,
   sanitizeFileName
 };

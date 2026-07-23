@@ -27,6 +27,7 @@ async function runTests() {
   await testDownloadFailedRecordDoesNotBlockRetry();
   await testSuccessfulRetryBlocksLaterDuplicates();
   await testLargeFilesAreQueuedWithoutDownloader();
+  await testAuthorIsPersistedForAllSizeCategories();
   await testDuplicateFilesAreSkipped();
   await testUnknownSizeFilesUseManualQueueStatus();
   await testTextMessageWithoutAttachmentsIsDeleted();
@@ -64,6 +65,7 @@ async function runTests() {
   await testConfirmClearQueueMarksRecordsDeleted();
   await testUnauthorizedCallbackIsIgnored();
   await testShowNextFilesSendsAtMostTenAndMarksShown();
+  await testManualDownloadUsesAuthorAsOnlyCaption();
   await testShowLargestFilesUsesSizeDescendingOrder();
   await testShowSmallestFilesUsesSizeAscendingOrder();
   await testShowPossibleDuplicatesSendsLargestSameSizeGroup();
@@ -402,6 +404,33 @@ async function testLargeFilesAreQueuedWithoutDownloader() {
     deps.messageSender.calls[0].text,
     'Файл "video" добавлен в очередь.'
   );
+}
+
+async function testAuthorIsPersistedForAllSizeCategories() {
+  const deps = createMockDependencies();
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 68,
+    message: createMessage({
+      caption: '👤 Straight Archive (Member)\n🎩 @APCL_Official_Channel 🆕 🔥',
+      document: createTelegramFile('doc-small', 'uniq-author-small', 1024),
+      photo: [
+        createTelegramFile('photo-large', 'uniq-author-large', DEFAULT_SMALL_FILE_LIMIT_BYTES + 1)
+      ],
+      video: createTelegramFile('video-unknown', 'uniq-author-unknown', undefined)
+    })
+  });
+
+  assert.deepStrictEqual(
+    result.files.map((file) => file.status),
+    ['downloaded', 'pending_manual_download', 'pending_size_unknown']
+  );
+  assert.deepStrictEqual(
+    deps.fileRepository.records.map((record) => record.author),
+    ['Straight Archive', 'Straight Archive', 'Straight Archive']
+  );
+  assert.strictEqual(deps.downloader.calls[0].author, 'Straight Archive');
 }
 
 async function testDuplicateFilesAreSkipped() {
@@ -1248,6 +1277,38 @@ async function testShowNextFilesSendsAtMostTenAndMarksShown() {
   assert.strictEqual(deps.fileSender.calls.some((call) => call.method === 'sendDocument'), false);
   assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].callback_data, CALLBACK_SHOW_NEXT_FILES);
   assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].text, 'Показать следующие вложения');
+}
+
+async function testManualDownloadUsesAuthorAsOnlyCaption() {
+  const deps = createMockDependencies({
+    pendingQueue: [
+      createRepositoryRecord({ id: 1, file_id: 'photo-author', file_unique_id: 'photo-author-unique', file_size: 40, file_kind: 'photo', author: 'Dr Strange' }),
+      createRepositoryRecord({ id: 2, file_id: 'video-author', file_unique_id: 'video-author-unique', file_size: 30, file_kind: 'video', author: 'Goblin Slayer' }),
+      createRepositoryRecord({ id: 3, file_id: 'document-author', file_unique_id: 'document-author-unique', file_size: 20, file_kind: 'document', author: 'Boolean Availability' }),
+      createRepositoryRecord({ id: 4, file_id: 'document-no-author', file_unique_id: 'document-no-author-unique', file_size: 10, file_kind: 'document' })
+    ]
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  await handler.handleUpdate({
+    update_id: 69,
+    callback_query: createCallbackQuery(CALLBACK_SHOW_LARGEST_FILES)
+  });
+
+  assert.deepStrictEqual(
+    deps.fileSender.calls.map((call) => ({
+      method: call.method,
+      fileId: call.fileId,
+      caption: call.caption
+    })),
+    [
+      { method: 'sendPhoto', fileId: 'photo-author', caption: 'Dr Strange' },
+      { method: 'sendVideo', fileId: 'video-author', caption: 'Goblin Slayer' },
+      { method: 'sendDocument', fileId: 'document-author', caption: 'Boolean Availability' },
+      { method: 'sendDocument', fileId: 'document-no-author', caption: undefined }
+    ]
+  );
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(deps.fileSender.calls[3], 'caption'), false);
 }
 
 async function testShowLargestFilesUsesSizeDescendingOrder() {
@@ -2135,6 +2196,7 @@ function createRepositoryRecord(overrides) {
     file_id: 'repo-file-1',
     file_unique_id: 'repo-unique-1',
     file_name: 'file.bin',
+    author: null,
     mime_type: 'application/octet-stream',
     file_size: 25 * 1024 * 1024,
     file_kind: 'document',

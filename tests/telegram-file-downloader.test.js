@@ -5,14 +5,20 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { createTelegramFileDownloader, sanitizeFileName } = require('../src/adapters/telegram/file-downloader');
+const {
+  createTelegramFileDownloader,
+  sanitizeDirectoryName,
+  sanitizeFileName
+} = require('../src/adapters/telegram/file-downloader');
 
 async function runTests() {
   testSanitizeFileNameKeepsSafeCharacters();
   testSanitizeFileNameReplacesUnsafeCharacters();
   testSanitizeFileNameRejectsDirectoryTraversalNames();
+  testSanitizeDirectoryNamePreservesUnicodeAndBlocksTraversal();
   await testDownloadUsesOriginalFileName();
   await testDownloadAddsFileUniqueIdWhenOriginalNameExists();
+  await testDownloadUsesAuthorDirectoryForAllSupportedKinds();
   await testDownloadUsesCurrentDateWhenMessageDateIsMissing();
 }
 
@@ -26,6 +32,12 @@ function testSanitizeFileNameReplacesUnsafeCharacters() {
 
 function testSanitizeFileNameRejectsDirectoryTraversalNames() {
   assert.strictEqual(sanitizeFileName('..'), 'telegram-file');
+}
+
+function testSanitizeDirectoryNamePreservesUnicodeAndBlocksTraversal() {
+  assert.strictEqual(sanitizeDirectoryName(' Гоблин Slayer '), 'Гоблин Slayer');
+  assert.strictEqual(sanitizeDirectoryName('Dr/Strange\\Team\u0000'), 'Dr_Strange_Team_');
+  assert.strictEqual(sanitizeDirectoryName('..'), null);
 }
 
 async function testDownloadUsesOriginalFileName() {
@@ -70,6 +82,38 @@ async function testDownloadAddsFileUniqueIdWhenOriginalNameExists() {
 
     assert.strictEqual(result.localPath, path.resolve(downloadsDir, '2026-05-16', 'report-unique-1.pdf'));
     assert.strictEqual(downloads[0].destinationPath, path.resolve(downloadsDir, '2026-05-16', 'report-unique-1.pdf'));
+  });
+}
+
+async function testDownloadUsesAuthorDirectoryForAllSupportedKinds() {
+  await withDownloadsDir(async (downloadsDir) => {
+    const downloads = [];
+    const downloader = createTelegramFileDownloader({
+      downloadsDir,
+      telegramClient: createMockTelegramClient(downloads)
+    });
+    const fileKinds = ['document', 'photo', 'video'];
+
+    for (const fileKind of fileKinds) {
+      const result = await downloader.download({
+        file_kind: fileKind,
+        file_id: `${fileKind}-1`,
+        file_unique_id: `${fileKind}-unique-1`,
+        file_name: `${fileKind}.bin`,
+        author: 'Goblin Slayer',
+        message_date: Date.parse('2026-05-15T21:30:00.000Z') / 1000
+      });
+
+      assert.strictEqual(
+        result.localPath,
+        path.resolve(downloadsDir, 'Goblin Slayer', `${fileKind}.bin`)
+      );
+    }
+
+    assert.deepStrictEqual(
+      downloads.map((download) => download.destinationPath),
+      fileKinds.map((fileKind) => path.resolve(downloadsDir, 'Goblin Slayer', `${fileKind}.bin`))
+    );
   });
 }
 

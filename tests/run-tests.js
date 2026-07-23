@@ -4,6 +4,7 @@ const tests = [
   require('./bot-commands.test'),
   require('./env.test'),
   require('./index.test'),
+  require('./message-author.test'),
   require('./polling.test'),
   require('./process-supervisor.test'),
   require('./process-message.test'),

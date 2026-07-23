@@ -1,5 +1,7 @@
 'use strict';
 
+const { extractMessageAuthor } = require('./message-author');
+
 const SUPPORTED_ATTACHMENT_TYPES = ['document', 'photo', 'video'];
 
 function extractSupportedAttachments(message) {
@@ -34,6 +36,7 @@ function normalizeAttachment(kind, rawAttachment, message) {
     file_id: rawAttachment.file_id || null,
     file_unique_id: rawAttachment.file_unique_id || null,
     file_name: rawAttachment.file_name || defaultFileName(kind),
+    author: extractMessageAuthor(message.caption),
     mime_type: rawAttachment.mime_type || null,
     file_size: normalizeOptionalNumber(rawAttachment.file_size),
     message_id: message.message_id || null,

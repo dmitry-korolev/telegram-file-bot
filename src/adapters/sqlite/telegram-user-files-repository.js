@@ -55,6 +55,7 @@ function createTelegramUserFilesRepository(sqliteClient) {
         file_id TEXT NOT NULL,
         file_unique_id TEXT NOT NULL,
         file_name TEXT,
+        author TEXT,
         mime_type TEXT,
         file_size INTEGER,
         file_kind TEXT NOT NULL,
@@ -127,6 +128,16 @@ function createTelegramUserFilesRepository(sqliteClient) {
       FROM telegram_file_events
       WHERE event_type = 'duplicate_skipped';
     `);
+
+    ensureAuthorColumn();
+  }
+
+  function ensureAuthorColumn() {
+    const columns = sqliteClient.query('PRAGMA table_info(telegram_user_files);');
+
+    if (!columns.some((column) => column.name === 'author')) {
+      sqliteClient.execute('ALTER TABLE telegram_user_files ADD COLUMN author TEXT;');
+    }
   }
 
   function create(record) {
@@ -140,6 +151,7 @@ function createTelegramUserFilesRepository(sqliteClient) {
         file_id,
         file_unique_id,
         file_name,
+        author,
         mime_type,
         file_size,
         file_kind,
@@ -163,6 +175,7 @@ function createTelegramUserFilesRepository(sqliteClient) {
         ${toSqlValue(normalizedRecord.file_id)},
         ${toSqlValue(normalizedRecord.file_unique_id)},
         ${toSqlValue(normalizedRecord.file_name)},
+        ${toSqlValue(normalizedRecord.author)},
         ${toSqlValue(normalizedRecord.mime_type)},
         ${toSqlValue(normalizedRecord.file_size)},
         ${toSqlValue(normalizedRecord.file_kind)},
@@ -937,6 +950,7 @@ function normalizeCreateRecord(record) {
     file_id: requiredString(record.file_id, 'file_id'),
     file_unique_id: requiredString(record.file_unique_id, 'file_unique_id'),
     file_name: optionalValue(record.file_name),
+    author: optionalValue(record.author),
     mime_type: optionalValue(record.mime_type),
     file_size: optionalNumber(record.file_size),
     file_kind: requiredString(record.file_kind, 'file_kind'),

@@ -9,6 +9,7 @@ async function runTests() {
   testBuildMultipartBodyIncludesFieldsAndFile();
   await testSetMyCommandsUsesTelegramMethod();
   await testSendPhotoUploadsBufferWithMultipart();
+  await testFileIdSendsIncludeOptionalCaption();
 }
 
 function testBuildMultipartBodyIncludesFieldsAndFile() {
@@ -104,6 +105,44 @@ async function testSetMyCommandsUsesTelegramMethod() {
       type: 'all_private_chats'
     }
   });
+}
+
+async function testFileIdSendsIncludeOptionalCaption() {
+  const requests = [];
+  const client = createTelegramClient({
+    token: 'test-token',
+    requestFn: createMockRequestFn(requests, { ok: true, result: { message_id: 321 } })
+  });
+
+  await client.sendPhoto({ chatId: 5001, fileId: 'photo-1', caption: 'Dr Strange' });
+  await client.sendVideo({ chatId: 5001, fileId: 'video-1', caption: 'Goblin Slayer' });
+  await client.sendDocument({ chatId: 5001, fileId: 'document-1', caption: 'Boolean Availability' });
+  await client.sendDocument({ chatId: 5001, fileId: 'document-2' });
+
+  assert.deepStrictEqual(
+    requests.map((request) => ({
+      path: request.options.path,
+      body: JSON.parse(request.body.toString('utf8'))
+    })),
+    [
+      {
+        path: '/bottest-token/sendPhoto',
+        body: { chat_id: 5001, photo: 'photo-1', caption: 'Dr Strange' }
+      },
+      {
+        path: '/bottest-token/sendVideo',
+        body: { chat_id: 5001, video: 'video-1', caption: 'Goblin Slayer' }
+      },
+      {
+        path: '/bottest-token/sendDocument',
+        body: { chat_id: 5001, document: 'document-1', caption: 'Boolean Availability' }
+      },
+      {
+        path: '/bottest-token/sendDocument',
+        body: { chat_id: 5001, document: 'document-2' }
+      }
+    ]
+  );
 }
 
 function createMockRequestFn(requests, apiResponse) {
