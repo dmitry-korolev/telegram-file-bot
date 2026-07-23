@@ -47,6 +47,7 @@ const CALLBACK_SEARCH_ARCHIVE_NEXT_PREFIX = 'search_archive_next:';
 const CALLBACK_SEARCH_ARCHIVE_LARGEST_PREFIX = 'search_archive_largest:';
 const CALLBACK_SEARCH_ARCHIVE_SMALLEST_PREFIX = 'search_archive_smallest:';
 const MANUAL_DOWNLOAD_BATCH_SIZE = 10;
+const MEDIA_GROUP_AUTHOR_CACHE_MAX_ENTRIES = 1000;
 const DELETE_MESSAGE_MAX_ATTEMPTS = 3;
 const DEFAULT_DOWNLOAD_MAX_ATTEMPTS = 20;
 const DEFAULT_DOWNLOAD_RETRY_DELAY_MS = 1000;
@@ -87,6 +88,7 @@ function createTelegramUpdateHandler(dependencies) {
   const nextQueuePosition = deps.nextQueuePosition || createInMemoryQueuePosition();
   const logger = normalizeLogger(deps.logger || console);
   const searchContexts = new Map();
+  const mediaGroupAuthors = new Map();
   let nextSearchContextId = 1;
 
   return {
@@ -146,6 +148,8 @@ function createTelegramUpdateHandler(dependencies) {
         sendMessageCalled: false
       };
     }
+
+    await inheritMediaGroupAuthor(message, processedMessage.attachments);
 
     if (processedMessage.attachments.length === 0) {
       if (normalizedOptions.handleCommands === false) {
@@ -587,6 +591,7 @@ function createTelegramUpdateHandler(dependencies) {
       file_id: record.file_id,
       file_unique_id: record.file_unique_id,
       file_name: record.file_name,
+      author: record.author || null,
       mime_type: record.mime_type,
       file_size: record.file_size,
       message_id: record.message_id,
@@ -1307,6 +1312,54 @@ function createTelegramUpdateHandler(dependencies) {
     }
 
     return keys;
+  }
+
+  async function inheritMediaGroupAuthor(message, attachments) {
+    if (!message.media_group_id || !Array.isArray(attachments) || attachments.length === 0) {
+      return;
+    }
+
+    const cacheKey = buildMediaGroupAuthorCacheKey(message);
+    const directAuthor = attachments.find((attachment) => attachment.author);
+    let author = directAuthor ? directAuthor.author : mediaGroupAuthors.get(cacheKey);
+
+    if (!author && typeof deps.fileRepository.findFilesByMediaGroup === 'function') {
+      const groupRecords = await deps.fileRepository.findFilesByMediaGroup(
+        message.chat && message.chat.id,
+        message.media_group_id
+      );
+      const recordWithAuthor = groupRecords.find((record) => record.author);
+      author = recordWithAuthor ? recordWithAuthor.author : null;
+    }
+
+    if (!author) {
+      return;
+    }
+
+    rememberMediaGroupAuthor(cacheKey, author);
+
+    for (const attachment of attachments) {
+      if (!attachment.author) {
+        attachment.author = author;
+      }
+    }
+  }
+
+  function buildMediaGroupAuthorCacheKey(message) {
+    const chatId = message.chat && message.chat.id;
+    return `${chatId}:${message.media_group_id}`;
+  }
+
+  function rememberMediaGroupAuthor(cacheKey, author) {
+    if (mediaGroupAuthors.has(cacheKey)) {
+      mediaGroupAuthors.delete(cacheKey);
+    }
+
+    mediaGroupAuthors.set(cacheKey, author);
+
+    if (mediaGroupAuthors.size > MEDIA_GROUP_AUTHOR_CACHE_MAX_ENTRIES) {
+      mediaGroupAuthors.delete(mediaGroupAuthors.keys().next().value);
+    }
   }
 
   async function processAttachment(attachment) {

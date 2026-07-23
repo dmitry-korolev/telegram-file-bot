@@ -44,6 +44,8 @@ Small files up to `SMALL_FILE_LIMIT_BYTES` are downloaded automatically to `DOWN
 
 When the first caption line looks like `⭐ Dr Strange (VIP)` or `💎 Goblin Slayer (platinum)`, the bot stores the text between the emoji and level as the file author. A second line is optional and ignored during author recognition. Automatically downloaded `document`, `photo`, and `video` attachments with an author go to `DOWNLOADS_DIR/<author>/`; other files keep the date-based layout.
 
+Telegram albums usually include the caption only on their first item. The bot carries the recognized author across every attachment with the same `media_group_id` without delaying per-item processing.
+
 Available commands:
 
 - `/show_queue` — show the shared queue summary: file count and total known size.

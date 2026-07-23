@@ -47,6 +47,9 @@ async function runTests() {
   await testDeleteMessageRetriesTransientFailure();
   await testDeleteMessageNotFoundIsTreatedAsDeleted();
   await testMediaGroupSendsImmediateFileResponses();
+  await testMediaGroupInheritsAuthorFromFirstCaption();
+  await testMediaGroupCachesAuthorWhenCaptionFileIsDuplicate();
+  await testMediaGroupRestoresAuthorFromRepository();
   await testSeparateMediaGroupsSendImmediateResponses();
   await testShowQueueCommandShowsQueue();
   await testSearchQueueCommandShowsFilteredQueueAndButtons();
@@ -650,6 +653,7 @@ async function testRetryCommandProcessesKnownMediaGroupRecords() {
         file_id: 'photo-downloaded',
         file_unique_id: 'uniq-album-downloaded',
         file_name: 'photo-downloaded.jpg',
+        author: 'Retry Author',
         file_kind: 'photo',
         file_size: 1024,
         status: 'downloaded',
@@ -662,6 +666,7 @@ async function testRetryCommandProcessesKnownMediaGroupRecords() {
         file_id: 'photo-failed',
         file_unique_id: 'uniq-album-failed',
         file_name: 'photo-failed.jpg',
+        author: 'Retry Author',
         file_kind: 'photo',
         file_size: 1024,
         status: 'download_failed',
@@ -692,6 +697,7 @@ async function testRetryCommandProcessesKnownMediaGroupRecords() {
   );
   assert.strictEqual(deps.downloader.calls.length, 1);
   assert.strictEqual(deps.downloader.calls[0].file_unique_id, 'uniq-album-failed');
+  assert.strictEqual(deps.downloader.calls[0].author, 'Retry Author');
   assert.deepStrictEqual(
     deps.messageDeleter.calls.map((call) => call.messageId),
     [2001, 2002]
@@ -926,6 +932,101 @@ async function testMediaGroupSendsImmediateFileResponses() {
   );
 }
 
+async function testMediaGroupInheritsAuthorFromFirstCaption() {
+  const deps = createMockDependencies();
+  const handler = createTelegramUpdateHandler(deps);
+
+  for (let index = 0; index < 4; index += 1) {
+    await handler.handleUpdate({
+      update_id: 70 + index,
+      message: createMessage({
+        message_id: 3001 + index,
+        media_group_id: 'album-with-author',
+        caption: index === 0 ? '⭐ Succulent Sauce (VIP)' : undefined,
+        photo: [
+          createTelegramFile(`album-photo-${index}`, `album-photo-unique-${index}`, 1024)
+        ]
+      })
+    });
+  }
+
+  assert.deepStrictEqual(
+    deps.downloader.calls.map((attachment) => attachment.author),
+    ['Succulent Sauce', 'Succulent Sauce', 'Succulent Sauce', 'Succulent Sauce']
+  );
+  assert.deepStrictEqual(
+    deps.fileRepository.records.map((record) => record.author),
+    ['Succulent Sauce', 'Succulent Sauce', 'Succulent Sauce', 'Succulent Sauce']
+  );
+}
+
+async function testMediaGroupCachesAuthorWhenCaptionFileIsDuplicate() {
+  const deps = createMockDependencies({
+    existingFileUniqueIds: ['duplicate-caption-file']
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  const first = await handler.handleUpdate({
+    update_id: 74,
+    message: createMessage({
+      message_id: 3010,
+      media_group_id: 'album-duplicate-first',
+      caption: '💎 Cached Author (Member)',
+      photo: [
+        createTelegramFile('duplicate-photo', 'duplicate-caption-file', 1024)
+      ]
+    })
+  });
+  const second = await handler.handleUpdate({
+    update_id: 75,
+    message: createMessage({
+      message_id: 3011,
+      media_group_id: 'album-duplicate-first',
+      photo: [
+        createTelegramFile('new-photo', 'new-photo-after-duplicate', 1024)
+      ]
+    })
+  });
+
+  assert.strictEqual(first.files[0].status, 'duplicate_skipped');
+  assert.strictEqual(second.files[0].status, 'downloaded');
+  assert.strictEqual(deps.fileRepository.records.length, 1);
+  assert.strictEqual(deps.fileRepository.records[0].author, 'Cached Author');
+}
+
+async function testMediaGroupRestoresAuthorFromRepository() {
+  const deps = createMockDependencies({
+    records: [
+      createRepositoryRecord({
+        id: 20,
+        message_id: 3020,
+        media_group_id: 'album-after-restart',
+        file_id: 'saved-first-photo',
+        file_unique_id: 'saved-first-photo-unique',
+        file_kind: 'photo',
+        file_size: 1024,
+        author: 'Persisted Author',
+        status: 'downloaded'
+      })
+    ]
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  await handler.handleUpdate({
+    update_id: 76,
+    message: createMessage({
+      message_id: 3021,
+      media_group_id: 'album-after-restart',
+      photo: [
+        createTelegramFile('second-photo', 'second-photo-after-restart', 1024)
+      ]
+    })
+  });
+
+  assert.strictEqual(deps.downloader.calls[0].author, 'Persisted Author');
+  assert.strictEqual(deps.fileRepository.records[1].author, 'Persisted Author');
+}
+
 async function testSeparateMediaGroupsSendImmediateResponses() {
   const deps = createMockDependencies();
   const handler = createTelegramUpdateHandler(deps);
@@ -934,6 +1035,7 @@ async function testSeparateMediaGroupsSendImmediateResponses() {
     update_id: 25,
     message: createMessage({
       media_group_id: 'album-a',
+      caption: '⭐ Album A Author (VIP)',
       document: createTelegramFile('doc-a', 'uniq-album-a', 1024)
     })
   });
@@ -948,6 +1050,8 @@ async function testSeparateMediaGroupsSendImmediateResponses() {
   assert.strictEqual(deps.messageSender.calls.length, 2);
   assert.strictEqual(deps.messageSender.calls[0].text, 'Файл "file" скачан: /tmp/doc-a');
   assert.strictEqual(deps.messageSender.calls[1].text, 'Файл "file" скачан: /tmp/doc-b');
+  assert.strictEqual(deps.fileRepository.records[0].author, 'Album A Author');
+  assert.strictEqual(deps.fileRepository.records[1].author, null);
 }
 
 async function testShowQueueCommandShowsQueue() {
