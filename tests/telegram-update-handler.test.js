@@ -5,6 +5,8 @@ const assert = require('assert');
 const {
   CALLBACK_CANCEL_CLEAR_QUEUE,
   CALLBACK_CONFIRM_CLEAR_QUEUE,
+  CALLBACK_RETURN_FILE_TO_ARCHIVE,
+  CALLBACK_RETURN_FILE_TO_QUEUE,
   CALLBACK_SHOW_LARGEST_ARCHIVE_FILES,
   CALLBACK_SHOW_LARGEST_FILES,
   CALLBACK_SHOW_NEXT_ARCHIVE_FILES,
@@ -54,6 +56,7 @@ async function runTests() {
   await testShowQueueCommandShowsQueue();
   await testSearchQueueCommandShowsFilteredQueueAndButtons();
   await testSearchQueueButtonShowsFilteredBatch();
+  await testFileActionButtonsMoveSentFile();
   await testQueueCommandRequiresReply();
   await testQueueCommandReportsUnknownReply();
   await testQueueCommandReturnsReplyFileToQueue();
@@ -1079,7 +1082,7 @@ async function testShowQueueCommandShowsQueue() {
 async function testSearchQueueCommandShowsFilteredQueueAndButtons() {
   const deps = createMockDependencies({
     manualQueue: [
-      createRepositoryRecord({ queue_position: 1, file_name: 'family-report.mp4', file_size: 25 * 1024 * 1024, status: 'pending_manual_download' }),
+      createRepositoryRecord({ queue_position: 1, file_name: 'family-video.mp4', author: 'Report Keeper', file_size: 25 * 1024 * 1024, status: 'pending_manual_download' }),
       createRepositoryRecord({ queue_position: 2, file_name: 'other.pdf', file_size: 10 * 1024 * 1024, status: 'pending_manual_download' })
     ]
   });
@@ -1087,11 +1090,11 @@ async function testSearchQueueCommandShowsFilteredQueueAndButtons() {
 
   const result = await handler.handleUpdate({
     update_id: 52,
-    message: createMessage({ text: '/search_queue report' })
+    message: createMessage({ text: '/search_queue keeper' })
   });
 
   assert.strictEqual(result.reason, 'search_queue_command');
-  assert.strictEqual(deps.messageSender.calls[0].text, 'Поиск в очереди по "report": В очереди файлов: 1. Суммарный объем: 25.0 МБ.');
+  assert.strictEqual(deps.messageSender.calls[0].text, 'Поиск в очереди по "keeper": В очереди файлов: 1. Суммарный объем: 25.0 МБ.');
   assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].text, 'Показать следующие вложения');
   assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].callback_data.startsWith('search_queue_next:'), true);
   assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[1][0].callback_data.startsWith('search_queue_largest:'), true);
@@ -1102,11 +1105,11 @@ async function testSearchQueueCommandShowsFilteredQueueAndButtons() {
 async function testSearchQueueButtonShowsFilteredBatch() {
   const deps = createMockDependencies({
     pendingQueue: [
-      createRepositoryRecord({ id: 41, queue_position: 1, file_name: 'family-report.mp4', file_kind: 'video', file_id: 'video-file', file_size: 25 * 1024 * 1024, status: 'pending_manual_download' }),
+      createRepositoryRecord({ id: 41, queue_position: 1, file_name: 'family-video.mp4', author: 'Report Keeper', file_kind: 'video', file_id: 'video-file', file_size: 25 * 1024 * 1024, status: 'pending_manual_download' }),
       createRepositoryRecord({ id: 42, queue_position: 2, file_name: 'other.pdf', file_kind: 'document', file_id: 'doc-file', file_size: 10 * 1024 * 1024, status: 'pending_manual_download' })
     ],
     manualQueue: [
-      createRepositoryRecord({ id: 41, queue_position: 1, file_name: 'family-report.mp4', file_kind: 'video', file_id: 'video-file', file_size: 25 * 1024 * 1024, status: 'pending_manual_download' }),
+      createRepositoryRecord({ id: 41, queue_position: 1, file_name: 'family-video.mp4', author: 'Report Keeper', file_kind: 'video', file_id: 'video-file', file_size: 25 * 1024 * 1024, status: 'pending_manual_download' }),
       createRepositoryRecord({ id: 42, queue_position: 2, file_name: 'other.pdf', file_kind: 'document', file_id: 'doc-file', file_size: 10 * 1024 * 1024, status: 'pending_manual_download' })
     ]
   });
@@ -1114,7 +1117,7 @@ async function testSearchQueueButtonShowsFilteredBatch() {
 
   await handler.handleUpdate({
     update_id: 53,
-    message: createMessage({ text: '/search_queue report' })
+    message: createMessage({ text: '/search_queue keeper' })
   });
 
   const callbackData = deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].callback_data;
@@ -1127,7 +1130,54 @@ async function testSearchQueueButtonShowsFilteredBatch() {
   assert.strictEqual(deps.fileSender.calls.length, 1);
   assert.strictEqual(deps.fileSender.calls[0].method, 'sendVideo');
   assert.strictEqual(deps.fileSender.calls[0].fileId, 'video-file');
+  assertFileActionsKeyboard(deps.fileSender.calls[0].replyMarkup);
   assert.deepStrictEqual(deps.fileRepository.confirmedIds, [41]);
+}
+
+async function testFileActionButtonsMoveSentFile() {
+  const file = createRepositoryRecord({
+    id: 43,
+    file_id: 'button-file',
+    file_unique_id: 'button-file-unique',
+    file_kind: 'document',
+    status: 'pending_manual_download'
+  });
+  const deps = createMockDependencies({
+    pendingQueue: [file],
+    manualQueue: [file]
+  });
+  const handler = createTelegramUpdateHandler(deps);
+
+  await handler.handleUpdate({
+    update_id: 58,
+    callback_query: createCallbackQuery(CALLBACK_SHOW_LARGEST_FILES)
+  });
+
+  const sentMessage = {
+    message_id: 3001,
+    chat: { id: 5001 }
+  };
+  const queued = await handler.handleUpdate({
+    update_id: 59,
+    callback_query: createCallbackQuery(CALLBACK_RETURN_FILE_TO_QUEUE, {
+      message: sentMessage
+    })
+  });
+  const archived = await handler.handleUpdate({
+    update_id: 60,
+    callback_query: createCallbackQuery(CALLBACK_RETURN_FILE_TO_ARCHIVE, {
+      message: sentMessage
+    })
+  });
+
+  assert.strictEqual(queued.reason, 'file_returned_to_queue');
+  assert.strictEqual(archived.reason, 'file_returned_to_archive');
+  assert.deepStrictEqual(deps.fileRepository.queuedIds, [43]);
+  assert.deepStrictEqual(deps.fileRepository.archivedIds, [43]);
+  assert.strictEqual(deps.fileRepository.events.some((event) => event.event_type === 'returned_to_queue'), true);
+  assert.strictEqual(deps.fileRepository.events.some((event) => event.event_type === 'archived'), true);
+  assert.strictEqual(deps.messageSender.calls[1].text, 'Файл возвращен в очередь.');
+  assert.strictEqual(deps.messageSender.calls[2].text, 'Файл перемещен в архив.');
 }
 
 async function testQueueCommandRequiresReply() {
@@ -1282,7 +1332,7 @@ async function testShowArchiveCommandShowsArchiveSummary() {
 async function testSearchArchiveCommandShowsFilteredArchiveAndButtons() {
   const deps = createMockDependencies({
     archiveQueue: [
-      createRepositoryRecord({ queue_position: 1, file_name: 'archive-report.mp4', file_size: 25 * 1024 * 1024, status: 'archived' }),
+      createRepositoryRecord({ queue_position: 1, file_name: 'archive-video.mp4', author: 'Report Keeper', file_size: 25 * 1024 * 1024, status: 'archived' }),
       createRepositoryRecord({ queue_position: 2, file_name: 'other.pdf', file_size: 10 * 1024 * 1024, status: 'archived' })
     ]
   });
@@ -1290,11 +1340,11 @@ async function testSearchArchiveCommandShowsFilteredArchiveAndButtons() {
 
   const result = await handler.handleUpdate({
     update_id: 55,
-    message: createMessage({ text: '/search_archive report' })
+    message: createMessage({ text: '/search_archive keeper' })
   });
 
   assert.strictEqual(result.reason, 'search_archive_command');
-  assert.strictEqual(deps.messageSender.calls[0].text, 'Поиск в архиве по "report": В архиве файлов: 1. Суммарный объем: 25.0 МБ.');
+  assert.strictEqual(deps.messageSender.calls[0].text, 'Поиск в архиве по "keeper": В архиве файлов: 1. Суммарный объем: 25.0 МБ.');
   assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].text, 'Показать следующие вложения');
   assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].callback_data.startsWith('search_archive_next:'), true);
   assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[1][0].callback_data.startsWith('search_archive_largest:'), true);
@@ -1379,6 +1429,7 @@ async function testShowNextFilesSendsAtMostTenAndMarksShown() {
   assert.deepStrictEqual(deps.fileRepository.shownIds, []);
   assert.strictEqual(deps.fileSender.calls[0].method, 'sendPhoto');
   assert.strictEqual(deps.fileSender.calls.some((call) => call.method === 'sendDocument'), false);
+  deps.fileSender.calls.forEach((call) => assertFileActionsKeyboard(call.replyMarkup));
   assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].callback_data, CALLBACK_SHOW_NEXT_FILES);
   assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].text, 'Показать следующие вложения');
 }
@@ -1413,6 +1464,7 @@ async function testManualDownloadUsesAuthorAsOnlyCaption() {
     ]
   );
   assert.strictEqual(Object.prototype.hasOwnProperty.call(deps.fileSender.calls[3], 'caption'), false);
+  deps.fileSender.calls.forEach((call) => assertFileActionsKeyboard(call.replyMarkup));
 }
 
 async function testShowLargestFilesUsesSizeDescendingOrder() {
@@ -1488,6 +1540,7 @@ async function testShowPossibleDuplicatesSendsLargestSameSizeGroup() {
     deps.fileRepository.sentFiles.map((sentFile) => sentFile.file_record_id),
     [4, 3]
   );
+  deps.fileSender.calls.forEach((call) => assertFileActionsKeyboard(call.replyMarkup));
   assert.strictEqual(deps.messageSender.calls[0].text, 'Показано возможных дубликатов: 2. Они отмечены как скачанные. Осталось групп: 1.');
 }
 
@@ -1602,6 +1655,7 @@ async function testShowArchiveFilesSendsAndConfirmsArchivedFiles() {
     deps.fileRepository.sentFiles.map((sentFile) => sentFile.file_record_id),
     [50, 51]
   );
+  deps.fileSender.calls.forEach((call) => assertFileActionsKeyboard(call.replyMarkup));
   assert.strictEqual(deps.messageSender.calls[0].text, 'Показано вложений из архива: 2. Они отмечены как скачанные. Осталось в архиве: 0.');
 }
 
@@ -1760,14 +1814,14 @@ function createMockDependencies(options) {
       };
     },
     async searchManualDownloadQueueSummary(searchTerm) {
-      const active = filterByFileName(
+      const active = filterByFileNameOrAuthor(
         this.manualQueue.filter((record) => ['pending_manual_download', 'pending_size_unknown', 'shown_to_user'].includes(record.status)),
         searchTerm
       );
       return buildMockSummary(active);
     },
     async searchPendingManualDownloadSummary(searchTerm) {
-      const pending = filterByFileName(
+      const pending = filterByFileNameOrAuthor(
         this.manualQueue.filter((record) => ['pending_manual_download', 'pending_size_unknown'].includes(record.status)),
         searchTerm
       );
@@ -1818,7 +1872,7 @@ function createMockDependencies(options) {
     async searchPendingManualDownloadQueue(searchTerm, options) {
       const limit = options && options.limit ? options.limit : 10;
       const orderBy = options && options.orderBy ? options.orderBy : 'queue';
-      const matching = filterByFileName(this.pendingQueue, searchTerm);
+      const matching = filterByFileNameOrAuthor(this.pendingQueue, searchTerm);
 
       if (orderBy === 'size_desc' || orderBy === 'size_asc') {
         return matching
@@ -1867,7 +1921,7 @@ function createMockDependencies(options) {
     async searchArchiveQueue(searchTerm, options) {
       const limit = options && options.limit ? options.limit : 10;
       const orderBy = options && options.orderBy ? options.orderBy : 'queue';
-      const matching = filterByFileName(this.archiveQueue, searchTerm);
+      const matching = filterByFileNameOrAuthor(this.archiveQueue, searchTerm);
 
       if (orderBy === 'size_desc' || orderBy === 'size_asc') {
         return matching
@@ -1904,7 +1958,7 @@ function createMockDependencies(options) {
       };
     },
     async searchArchiveSummary(searchTerm) {
-      const archived = filterByFileName(this.archiveQueue.filter((record) => record.status === 'archived'), searchTerm);
+      const archived = filterByFileNameOrAuthor(this.archiveQueue.filter((record) => record.status === 'archived'), searchTerm);
       return buildMockSummary(archived);
     },
     async getShownToUserFiles() {
@@ -2165,14 +2219,17 @@ function flushMicrotasks() {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
-function filterByFileName(records, searchTerm) {
+function filterByFileNameOrAuthor(records, searchTerm) {
   const needle = String(searchTerm || '').trim().toLowerCase();
 
   if (!needle) {
     return [];
   }
 
-  return records.filter((record) => String(record.file_name || '').toLowerCase().includes(needle));
+  return records.filter((record) => (
+    String(record.file_name || '').toLowerCase().includes(needle)
+    || String(record.author || '').toLowerCase().includes(needle)
+  ));
 }
 
 function getPotentialDuplicateGroups(records) {
@@ -2289,6 +2346,23 @@ function createCallbackQuery(data, overrides) {
       chat: { id: 5001 }
     }
   }, overrides || {});
+}
+
+function assertFileActionsKeyboard(replyMarkup) {
+  assert.deepStrictEqual(replyMarkup, {
+    inline_keyboard: [
+      [
+        {
+          text: 'Вернуть в очередь',
+          callback_data: CALLBACK_RETURN_FILE_TO_QUEUE
+        },
+        {
+          text: 'Вернуть в архив',
+          callback_data: CALLBACK_RETURN_FILE_TO_ARCHIVE
+        }
+      ]
+    ]
+  });
 }
 
 function createRepositoryRecord(overrides) {

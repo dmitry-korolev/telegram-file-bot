@@ -85,6 +85,29 @@ function createClearQueueConfirmationKeyboard() {
   };
 }
 
+function createFileActionsKeyboard(options) {
+  const normalizedOptions = options || {};
+  const callbackData = Object.assign({
+    returnToQueue: 'return_file_to_queue',
+    returnToArchive: 'return_file_to_archive'
+  }, normalizedOptions.callbackData || {});
+
+  return {
+    inline_keyboard: [
+      [
+        {
+          text: 'Вернуть в очередь',
+          callback_data: callbackData.returnToQueue
+        },
+        {
+          text: 'Вернуть в архив',
+          callback_data: callbackData.returnToArchive
+        }
+      ]
+    ]
+  };
+}
+
 function buildQueueMessage(files) {
   const normalizedFiles = Array.isArray(files) ? files : [];
 
@@ -315,6 +338,7 @@ module.exports = {
   getCommandArgumentText,
   createShowNextFilesKeyboard,
   createClearQueueConfirmationKeyboard,
+  createFileActionsKeyboard,
   buildQueueMessage,
   buildQueueSummaryMessage,
   buildArchiveSummaryMessage,

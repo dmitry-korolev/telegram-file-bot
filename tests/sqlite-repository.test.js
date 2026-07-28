@@ -23,9 +23,10 @@ function runTests() {
   testManualDownloadQueueIncludesActiveStatuses();
   testManualDownloadQueueSummaryIsNotLimited();
   testPendingManualDownloadSummaryExcludesShownRecords();
-  testSearchManualDownloadQueueByFileName();
+  testSearchManualDownloadQueueByFileNameOrAuthor();
+  testSearchEscapesLikeWildcardsForFileNameAndAuthor();
   testArchiveQueueAndSummaryUseArchivedStatus();
-  testSearchArchiveQueueByFileName();
+  testSearchArchiveQueueByFileNameOrAuthor();
   testGetShownToUserFilesReturnsShownRecords();
   testGetStatsAggregatesFiles();
   testGetStatsImageDataAggregatesBuckets();
@@ -558,12 +559,13 @@ function testPendingManualDownloadSummaryExcludesShownRecords() {
   });
 }
 
-function testSearchManualDownloadQueueByFileName() {
+function testSearchManualDownloadQueueByFileNameOrAuthor() {
   withRepository((repository) => {
     repository.create(createRecord({
       file_id: 'video-1',
       file_unique_id: 'video-unique-1',
       file_name: 'Trip Report.mp4',
+      author: null,
       file_kind: 'video',
       status: 'pending_manual_download',
       queue_position: 1,
@@ -572,7 +574,8 @@ function testSearchManualDownloadQueueByFileName() {
     repository.create(createRecord({
       file_id: 'doc-1',
       file_unique_id: 'doc-unique-1',
-      file_name: 'trip notes.pdf',
+      file_name: 'notes.pdf',
+      author: 'Trip Archivist',
       file_kind: 'document',
       status: 'pending_manual_download',
       queue_position: 2,
@@ -582,6 +585,7 @@ function testSearchManualDownloadQueueByFileName() {
       file_id: 'archived-1',
       file_unique_id: 'archived-unique-1',
       file_name: 'trip archive.zip',
+      author: 'Trip Archivist',
       file_kind: 'document',
       status: 'archived',
       queue_position: 3,
@@ -596,6 +600,49 @@ function testSearchManualDownloadQueueByFileName() {
     assert.deepStrictEqual(largest.map((item) => item.file_unique_id), ['video-unique-1', 'doc-unique-1']);
     assert.strictEqual(summary.fileCount, 2);
     assert.strictEqual(summary.totalKnownSize, 40 * 1024 * 1024);
+  });
+}
+
+function testSearchEscapesLikeWildcardsForFileNameAndAuthor() {
+  withRepository((repository) => {
+    repository.create(createRecord({
+      file_id: 'percent-file',
+      file_unique_id: 'percent-unique',
+      file_name: 'literal%file.bin',
+      status: 'pending_manual_download',
+      queue_position: 1
+    }));
+    repository.create(createRecord({
+      file_id: 'underscore-author',
+      file_unique_id: 'underscore-unique',
+      file_name: 'ordinary.bin',
+      author: 'Under_score',
+      status: 'pending_manual_download',
+      queue_position: 2
+    }));
+    repository.create(createRecord({
+      file_id: 'backslash-author',
+      file_unique_id: 'backslash-unique',
+      file_name: 'another.bin',
+      author: 'Path\\Keeper',
+      status: 'pending_manual_download',
+      queue_position: 3
+    }));
+    repository.create(createRecord({
+      file_id: 'wildcard-lookalike',
+      file_unique_id: 'wildcard-lookalike-unique',
+      file_name: 'literalXfile.bin',
+      author: 'UnderXscore PathXKeeper',
+      status: 'pending_manual_download',
+      queue_position: 4
+    }));
+
+    assert.deepStrictEqual(
+      repository.searchPendingManualDownloadQueue('%', { limit: 10 }).map((item) => item.file_unique_id),
+      ['percent-unique']
+    );
+    assert.strictEqual(repository.searchManualDownloadQueueSummary('_').fileCount, 1);
+    assert.strictEqual(repository.searchPendingManualDownloadSummary('\\').fileCount, 1);
   });
 }
 
@@ -637,12 +684,13 @@ function testArchiveQueueAndSummaryUseArchivedStatus() {
   });
 }
 
-function testSearchArchiveQueueByFileName() {
+function testSearchArchiveQueueByFileNameOrAuthor() {
   withRepository((repository) => {
     repository.create(createRecord({
       file_id: 'archived-video',
       file_unique_id: 'archived-video-unique',
       file_name: 'Holiday Clip.mp4',
+      author: null,
       file_kind: 'video',
       status: 'archived',
       queue_position: 1,
@@ -651,7 +699,8 @@ function testSearchArchiveQueueByFileName() {
     repository.create(createRecord({
       file_id: 'archived-doc',
       file_unique_id: 'archived-doc-unique',
-      file_name: 'holiday notes.pdf',
+      file_name: 'notes.pdf',
+      author: 'Holiday Archivist',
       file_kind: 'document',
       status: 'archived',
       queue_position: 2,
@@ -660,7 +709,8 @@ function testSearchArchiveQueueByFileName() {
     repository.create(createRecord({
       file_id: 'pending-video',
       file_unique_id: 'pending-video-unique',
-      file_name: 'holiday pending.mp4',
+      file_name: 'pending.mp4',
+      author: 'Holiday Archivist',
       file_kind: 'video',
       status: 'pending_manual_download',
       queue_position: 3,

@@ -67,7 +67,8 @@ function createTelegramClient(options) {
     if (payload.photoBuffer) {
       return callApiMultipart('sendPhoto', {
         chat_id: payload.chatId,
-        caption: payload.caption || null
+        caption: payload.caption || null,
+        reply_markup: payload.replyMarkup ? JSON.stringify(payload.replyMarkup) : null
       }, {
         fieldName: 'photo',
         filename: payload.filename || 'photo.png',
@@ -76,24 +77,24 @@ function createTelegramClient(options) {
       });
     }
 
-    return callApi('sendPhoto', withOptionalCaption({
+    return callApi('sendPhoto', withOptionalMediaOptions({
       chat_id: payload.chatId,
       photo: payload.fileId
-    }, payload.caption));
+    }, payload));
   }
 
   async function sendVideo(payload) {
-    return callApi('sendVideo', withOptionalCaption({
+    return callApi('sendVideo', withOptionalMediaOptions({
       chat_id: payload.chatId,
       video: payload.fileId
-    }, payload.caption));
+    }, payload));
   }
 
   async function sendDocument(payload) {
-    return callApi('sendDocument', withOptionalCaption({
+    return callApi('sendDocument', withOptionalMediaOptions({
       chat_id: payload.chatId,
       document: payload.fileId
-    }, payload.caption));
+    }, payload));
   }
 
   async function answerCallbackQuery(payload) {
@@ -380,6 +381,18 @@ function buildFileLogFields(file) {
 function withOptionalCaption(params, caption) {
   if (typeof caption === 'string' && caption.length > 0) {
     params.caption = caption;
+  }
+
+  return params;
+}
+
+function withOptionalMediaOptions(params, payload) {
+  const normalizedPayload = payload || {};
+
+  withOptionalCaption(params, normalizedPayload.caption);
+
+  if (normalizedPayload.replyMarkup) {
+    params.reply_markup = normalizedPayload.replyMarkup;
   }
 
   return params;

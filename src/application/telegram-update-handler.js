@@ -25,6 +25,7 @@ const {
   buildShownFilesMessage,
   buildShownPotentialDuplicateFilesMessage,
   createClearQueueConfirmationKeyboard,
+  createFileActionsKeyboard,
   createShowNextFilesKeyboard,
   getCommandArgumentText,
   getCommandName,
@@ -46,6 +47,8 @@ const CALLBACK_SEARCH_QUEUE_SMALLEST_PREFIX = 'search_queue_smallest:';
 const CALLBACK_SEARCH_ARCHIVE_NEXT_PREFIX = 'search_archive_next:';
 const CALLBACK_SEARCH_ARCHIVE_LARGEST_PREFIX = 'search_archive_largest:';
 const CALLBACK_SEARCH_ARCHIVE_SMALLEST_PREFIX = 'search_archive_smallest:';
+const CALLBACK_RETURN_FILE_TO_QUEUE = 'return_file_to_queue';
+const CALLBACK_RETURN_FILE_TO_ARCHIVE = 'return_file_to_archive';
 const MANUAL_DOWNLOAD_BATCH_SIZE = 10;
 const MEDIA_GROUP_AUTHOR_CACHE_MAX_ENTRIES = 1000;
 const DELETE_MESSAGE_MAX_ATTEMPTS = 3;
@@ -454,6 +457,24 @@ function createTelegramUpdateHandler(dependencies) {
 
     if (callbackQuery.data && callbackQuery.data.startsWith(CALLBACK_SEARCH_ARCHIVE_SMALLEST_PREFIX)) {
       return showSearchBatch(callbackQuery, CALLBACK_SEARCH_ARCHIVE_SMALLEST_PREFIX, 'size_asc');
+    }
+
+    if (callbackQuery.data === CALLBACK_RETURN_FILE_TO_QUEUE) {
+      return moveSentFile({
+        chatId: callbackQuery.message && callbackQuery.message.chat && callbackQuery.message.chat.id,
+        sentMessageId: callbackQuery.message && callbackQuery.message.message_id,
+        target: 'queue',
+        reason: 'file_returned_to_queue'
+      });
+    }
+
+    if (callbackQuery.data === CALLBACK_RETURN_FILE_TO_ARCHIVE) {
+      return moveSentFile({
+        chatId: callbackQuery.message && callbackQuery.message.chat && callbackQuery.message.chat.id,
+        sentMessageId: callbackQuery.message && callbackQuery.message.message_id,
+        target: 'archive',
+        reason: 'file_returned_to_archive'
+      });
     }
 
     if (callbackQuery.data === CALLBACK_CONFIRM_CLEAR_QUEUE) {
@@ -1032,46 +1053,12 @@ function createTelegramUpdateHandler(dependencies) {
       };
     }
 
-    const file = await deps.fileRepository.findFileBySentMessage(
-      message.chat && message.chat.id,
-      replyToMessageId
-    );
-
-    if (!file) {
-      const text = buildArchiveFileNotFoundMessage();
-
-      await deps.messageSender.sendMessage({
-        chatId: message.chat && message.chat.id,
-        text
-      });
-
-      return {
-        accepted: true,
-        reason: 'archive_file_not_found',
-        files: [],
-        deleteMessageCalled: false,
-        sendMessageCalled: true,
-        responseText: text
-      };
-    }
-
-    const archived = await deps.fileRepository.markFilesAsArchived([file.id], now());
-    await logFileEvents(archived.length > 0 ? archived : [file], 'archived', 'archived');
-    const text = buildArchiveConfirmedMessage();
-
-    await deps.messageSender.sendMessage({
+    return moveSentFile({
       chatId: message.chat && message.chat.id,
-      text
+      sentMessageId: replyToMessageId,
+      target: 'archive',
+      reason: 'archive_command'
     });
-
-    return {
-      accepted: true,
-      reason: 'archive_command',
-      files: archived.map(toResultFile),
-      deleteMessageCalled: false,
-      sendMessageCalled: true,
-      responseText: text
-    };
   }
 
   async function handleQueueReturnCommand(message) {
@@ -1095,22 +1082,37 @@ function createTelegramUpdateHandler(dependencies) {
       };
     }
 
-    const file = await deps.fileRepository.findFileBySentMessage(
-      message.chat && message.chat.id,
-      replyToMessageId
-    );
+    return moveSentFile({
+      chatId: message.chat && message.chat.id,
+      sentMessageId: replyToMessageId,
+      target: 'queue',
+      reason: 'queue_return_command'
+    });
+  }
+
+  async function moveSentFile(options) {
+    const normalizedOptions = options || {};
+    const targetArchive = normalizedOptions.target === 'archive';
+    const file = Number.isFinite(normalizedOptions.sentMessageId)
+      ? await deps.fileRepository.findFileBySentMessage(
+        normalizedOptions.chatId,
+        normalizedOptions.sentMessageId
+      )
+      : null;
 
     if (!file) {
-      const text = buildQueueFileNotFoundMessage();
+      const text = targetArchive
+        ? buildArchiveFileNotFoundMessage()
+        : buildQueueFileNotFoundMessage();
 
       await deps.messageSender.sendMessage({
-        chatId: message.chat && message.chat.id,
+        chatId: normalizedOptions.chatId,
         text
       });
 
       return {
         accepted: true,
-        reason: 'queue_file_not_found',
+        reason: targetArchive ? 'archive_file_not_found' : 'queue_file_not_found',
         files: [],
         deleteMessageCalled: false,
         sendMessageCalled: true,
@@ -1118,19 +1120,32 @@ function createTelegramUpdateHandler(dependencies) {
       };
     }
 
-    const queued = await deps.fileRepository.markFilesAsQueued([file.id], now());
-    await logFileEvents(queued.length > 0 ? queued : [file], queued[0] ? queued[0].status : file.status, 'returned_to_queue');
-    const text = buildQueueReturnConfirmedMessage();
+    let updated;
+    let text;
+
+    if (targetArchive) {
+      updated = await deps.fileRepository.markFilesAsArchived([file.id], now());
+      await logFileEvents(updated.length > 0 ? updated : [file], 'archived', 'archived');
+      text = buildArchiveConfirmedMessage();
+    } else {
+      updated = await deps.fileRepository.markFilesAsQueued([file.id], now());
+      await logFileEvents(
+        updated.length > 0 ? updated : [file],
+        updated[0] ? updated[0].status : file.status,
+        'returned_to_queue'
+      );
+      text = buildQueueReturnConfirmedMessage();
+    }
 
     await deps.messageSender.sendMessage({
-      chatId: message.chat && message.chat.id,
+      chatId: normalizedOptions.chatId,
       text
     });
 
     return {
       accepted: true,
-      reason: 'queue_return_command',
-      files: queued.map(toResultFile),
+      reason: normalizedOptions.reason,
+      files: updated.map(toResultFile),
       deleteMessageCalled: false,
       sendMessageCalled: true,
       responseText: text
@@ -1140,7 +1155,8 @@ function createTelegramUpdateHandler(dependencies) {
   async function sendQueuedFile(chatId, file) {
     const payload = {
       chatId,
-      fileId: file.file_id
+      fileId: file.file_id,
+      replyMarkup: createFileActionsKeyboard()
     };
 
     if (file.author) {
@@ -1704,6 +1720,8 @@ module.exports = {
   CALLBACK_SHOW_NEXT_ARCHIVE_FILES,
   CALLBACK_SHOW_LARGEST_ARCHIVE_FILES,
   CALLBACK_SHOW_SMALLEST_ARCHIVE_FILES,
+  CALLBACK_RETURN_FILE_TO_QUEUE,
+  CALLBACK_RETURN_FILE_TO_ARCHIVE,
   CALLBACK_CONFIRM_CLEAR_QUEUE,
   CALLBACK_CANCEL_CLEAR_QUEUE,
   DEFAULT_DOWNLOAD_MAX_ATTEMPTS,

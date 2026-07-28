@@ -109,14 +109,24 @@ async function testSetMyCommandsUsesTelegramMethod() {
 
 async function testFileIdSendsIncludeOptionalCaption() {
   const requests = [];
+  const replyMarkup = {
+    inline_keyboard: [
+      [
+        {
+          text: 'Вернуть в очередь',
+          callback_data: 'return_file_to_queue'
+        }
+      ]
+    ]
+  };
   const client = createTelegramClient({
     token: 'test-token',
     requestFn: createMockRequestFn(requests, { ok: true, result: { message_id: 321 } })
   });
 
-  await client.sendPhoto({ chatId: 5001, fileId: 'photo-1', caption: 'Dr Strange' });
-  await client.sendVideo({ chatId: 5001, fileId: 'video-1', caption: 'Goblin Slayer' });
-  await client.sendDocument({ chatId: 5001, fileId: 'document-1', caption: 'Boolean Availability' });
+  await client.sendPhoto({ chatId: 5001, fileId: 'photo-1', caption: 'Dr Strange', replyMarkup });
+  await client.sendVideo({ chatId: 5001, fileId: 'video-1', caption: 'Goblin Slayer', replyMarkup });
+  await client.sendDocument({ chatId: 5001, fileId: 'document-1', caption: 'Boolean Availability', replyMarkup });
   await client.sendDocument({ chatId: 5001, fileId: 'document-2' });
 
   assert.deepStrictEqual(
@@ -127,15 +137,15 @@ async function testFileIdSendsIncludeOptionalCaption() {
     [
       {
         path: '/bottest-token/sendPhoto',
-        body: { chat_id: 5001, photo: 'photo-1', caption: 'Dr Strange' }
+        body: { chat_id: 5001, photo: 'photo-1', caption: 'Dr Strange', reply_markup: replyMarkup }
       },
       {
         path: '/bottest-token/sendVideo',
-        body: { chat_id: 5001, video: 'video-1', caption: 'Goblin Slayer' }
+        body: { chat_id: 5001, video: 'video-1', caption: 'Goblin Slayer', reply_markup: replyMarkup }
       },
       {
         path: '/bottest-token/sendDocument',
-        body: { chat_id: 5001, document: 'document-1', caption: 'Boolean Availability' }
+        body: { chat_id: 5001, document: 'document-1', caption: 'Boolean Availability', reply_markup: replyMarkup }
       },
       {
         path: '/bottest-token/sendDocument',

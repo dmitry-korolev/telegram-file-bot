@@ -26,6 +26,14 @@ function testBotCommandsIncludePublicCommands() {
     ]
   );
   assert.strictEqual(BOT_COMMANDS.every((command) => typeof command.description === 'string' && command.description.length > 0), true);
+  assert.strictEqual(
+    BOT_COMMANDS.find((command) => command.command === 'search_queue').description,
+    'Найти файл или автора в очереди'
+  );
+  assert.strictEqual(
+    BOT_COMMANDS.find((command) => command.command === 'search_archive').description,
+    'Найти файл или автора в архиве'
+  );
 }
 
 function testBotCommandsUsePrivateChatScope() {

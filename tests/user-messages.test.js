@@ -19,6 +19,7 @@ const {
   buildQueueSummaryMessage,
   buildSingleFileResponse,
   buildStatsMessage,
+  createFileActionsKeyboard,
   createShowNextFilesKeyboard,
   getCommandArgumentText,
   isCommandMessage
@@ -34,6 +35,7 @@ function runTests() {
   testShowNextKeyboardIncludesQueueAndSizeActions();
   testShowNextKeyboardCanUseCustomCallbacks();
   testShowNextKeyboardCanHideSizeActions();
+  testFileActionsKeyboardIncludesQueueAndArchive();
   testShownFilesMessageMarksFilesDownloaded();
   testArchiveMessages();
   testQueueReturnMessages();
@@ -123,6 +125,23 @@ function testShowNextKeyboardCanUseCustomCallbacks() {
   assert.strictEqual(keyboard[1][0].callback_data, 'archive_largest');
   assert.strictEqual(keyboard[1][1].callback_data, 'archive_smallest');
   assert.strictEqual(keyboard.length, 2);
+}
+
+function testFileActionsKeyboardIncludesQueueAndArchive() {
+  assert.deepStrictEqual(createFileActionsKeyboard(), {
+    inline_keyboard: [
+      [
+        {
+          text: 'Вернуть в очередь',
+          callback_data: 'return_file_to_queue'
+        },
+        {
+          text: 'Вернуть в архив',
+          callback_data: 'return_file_to_archive'
+        }
+      ]
+    ]
+  });
 }
 
 function testShownFilesMessageMarksFilesDownloaded() {

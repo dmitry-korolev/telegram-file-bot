@@ -7,7 +7,7 @@ const BOT_COMMANDS = [
   },
   {
     command: 'search_queue',
-    description: 'Найти файл в очереди'
+    description: 'Найти файл или автора в очереди'
   },
   {
     command: 'queue',
@@ -23,7 +23,7 @@ const BOT_COMMANDS = [
   },
   {
     command: 'search_archive',
-    description: 'Найти файл в архиве'
+    description: 'Найти файл или автора в архиве'
   },
   {
     command: 'archive',

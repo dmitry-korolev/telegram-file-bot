@@ -49,10 +49,10 @@ Telegram albums usually include the caption only on their first item. The bot ca
 Available commands:
 
 - `/show_queue` — show the shared queue summary: file count and total known size.
-- `/search_queue <search_term>` — search queued files by original file name and show the same next/largest/smallest buttons for matching files.
+- `/search_queue <search_term>` — search queued files by original file name or author and show the same next/largest/smallest buttons for matching files.
 - `/queue` — when sent as a reply to media previously sent by the bot, return that file to the queue as not downloaded.
 - `/show_archive` — show the archive summary and buttons for archived files.
-- `/search_archive <search_term>` — search archived files by original file name and show the same next/largest/smallest buttons for matching files.
+- `/search_archive <search_term>` — search archived files by original file name or author and show the same next/largest/smallest buttons for matching files.
 - `/archive` — when sent as a reply to media previously sent by the bot, move that file to the archive.
 - `/stats` — show aggregate bot statistics: total files, known total size, active queue size, downloaded files, confirmed manual downloads, duplicates, errors, and attachment types.
 - `/stats_image` — send aggregate bot statistics as a PNG image with charts for file sizes, attachment types, and processing statuses.
@@ -64,10 +64,14 @@ Available buttons:
 - `10 самых больших` — sends up to 10 queued files with the largest known size.
 - `10 самых маленьких` — sends up to 10 queued files with the smallest known size.
 - `Показать возможные дубликаты` — sends the largest same-size group from the queue when at least two pending files have the exact same known byte size. Successfully sent files are immediately marked as `download_confirmed`.
+- `Вернуть в очередь` — returns that specific delivered file to the queue as not downloaded.
+- `Вернуть в архив` — returns that specific delivered file to the archive.
 - `Очистить очередь` — confirms `/clear_queue`.
 - `Отмена` — cancels queue cleanup.
 
 The same next/largest/smallest buttons are used for `/show_archive`, but they operate on archived files. Files shown from the archive are removed from the archive and marked as `download_confirmed`. The possible-duplicates button is only shown for the main queue.
+
+Every file delivered from the queue, search results, a potential-duplicate group, or the archive immediately includes the `Вернуть в очередь` and `Вернуть в архив` buttons. The `/queue` and `/archive` reply commands remain available as an alternative.
 
 To migrate already downloaded local files to the current naming rule, first inspect the plan:
 

@@ -282,9 +282,9 @@ function createTelegramUserFilesRepository(sqliteClient) {
     const normalizedOptions = options || {};
     const limit = normalizePositiveInteger(normalizedOptions.limit, 10);
     const orderBy = normalizedOptions.orderBy || 'queue';
-    const fileNameCondition = buildFileNameSearchCondition(searchTerm);
+    const searchCondition = buildFileSearchCondition(searchTerm);
 
-    if (!fileNameCondition) {
+    if (!searchCondition) {
       return [];
     }
 
@@ -296,7 +296,7 @@ function createTelegramUserFilesRepository(sqliteClient) {
         FROM telegram_user_files
         WHERE status = 'pending_manual_download'
           AND file_size IS NOT NULL
-          AND ${fileNameCondition}
+          AND ${searchCondition}
         ORDER BY file_size ${direction}, queue_position ASC, received_at ASC, id ASC
         LIMIT ${limit};
       `);
@@ -307,7 +307,7 @@ function createTelegramUserFilesRepository(sqliteClient) {
       FROM telegram_user_files
       WHERE status = 'pending_manual_download'
         AND file_kind IN ('photo', 'video')
-        AND ${fileNameCondition}
+        AND ${searchCondition}
       ORDER BY queue_position ASC, received_at ASC, id ASC
       LIMIT ${limit};
     `);
@@ -321,7 +321,7 @@ function createTelegramUserFilesRepository(sqliteClient) {
       FROM telegram_user_files
       WHERE status = 'pending_manual_download'
         AND file_kind = 'document'
-        AND ${fileNameCondition}
+        AND ${searchCondition}
       ORDER BY queue_position ASC, received_at ASC, id ASC
       LIMIT ${limit};
     `);
@@ -414,9 +414,9 @@ function createTelegramUserFilesRepository(sqliteClient) {
   }
 
   function searchManualDownloadQueueSummary(searchTerm) {
-    const fileNameCondition = buildFileNameSearchCondition(searchTerm);
+    const searchCondition = buildFileSearchCondition(searchTerm);
 
-    if (!fileNameCondition) {
+    if (!searchCondition) {
       return normalizeQueueSummaryRow({});
     }
 
@@ -427,16 +427,16 @@ function createTelegramUserFilesRepository(sqliteClient) {
         SUM(CASE WHEN file_size IS NULL THEN 1 ELSE 0 END) AS unknown_size_files
       FROM telegram_user_files
       WHERE status IN ('pending_manual_download', 'pending_size_unknown', 'shown_to_user')
-        AND ${fileNameCondition};
+        AND ${searchCondition};
     `);
 
     return normalizeQueueSummaryRow(rows[0] || {});
   }
 
   function searchPendingManualDownloadSummary(searchTerm) {
-    const fileNameCondition = buildFileNameSearchCondition(searchTerm);
+    const searchCondition = buildFileSearchCondition(searchTerm);
 
-    if (!fileNameCondition) {
+    if (!searchCondition) {
       return normalizeQueueSummaryRow({});
     }
 
@@ -447,7 +447,7 @@ function createTelegramUserFilesRepository(sqliteClient) {
         SUM(CASE WHEN file_size IS NULL THEN 1 ELSE 0 END) AS unknown_size_files
       FROM telegram_user_files
       WHERE status IN ('pending_manual_download', 'pending_size_unknown')
-        AND ${fileNameCondition};
+        AND ${searchCondition};
     `);
 
     return normalizeQueueSummaryRow(rows[0] || {});
@@ -498,9 +498,9 @@ function createTelegramUserFilesRepository(sqliteClient) {
     const normalizedOptions = options || {};
     const limit = normalizePositiveInteger(normalizedOptions.limit, 10);
     const orderBy = normalizedOptions.orderBy || 'queue';
-    const fileNameCondition = buildFileNameSearchCondition(searchTerm);
+    const searchCondition = buildFileSearchCondition(searchTerm);
 
-    if (!fileNameCondition) {
+    if (!searchCondition) {
       return [];
     }
 
@@ -512,7 +512,7 @@ function createTelegramUserFilesRepository(sqliteClient) {
         FROM telegram_user_files
         WHERE status = 'archived'
           AND file_size IS NOT NULL
-          AND ${fileNameCondition}
+          AND ${searchCondition}
         ORDER BY file_size ${direction}, queue_position ASC, received_at ASC, id ASC
         LIMIT ${limit};
       `);
@@ -523,7 +523,7 @@ function createTelegramUserFilesRepository(sqliteClient) {
       FROM telegram_user_files
       WHERE status = 'archived'
         AND file_kind IN ('photo', 'video')
-        AND ${fileNameCondition}
+        AND ${searchCondition}
       ORDER BY queue_position ASC, received_at ASC, id ASC
       LIMIT ${limit};
     `);
@@ -537,7 +537,7 @@ function createTelegramUserFilesRepository(sqliteClient) {
       FROM telegram_user_files
       WHERE status = 'archived'
         AND file_kind = 'document'
-        AND ${fileNameCondition}
+        AND ${searchCondition}
       ORDER BY queue_position ASC, received_at ASC, id ASC
       LIMIT ${limit};
     `);
@@ -557,9 +557,9 @@ function createTelegramUserFilesRepository(sqliteClient) {
   }
 
   function searchArchiveSummary(searchTerm) {
-    const fileNameCondition = buildFileNameSearchCondition(searchTerm);
+    const searchCondition = buildFileSearchCondition(searchTerm);
 
-    if (!fileNameCondition) {
+    if (!searchCondition) {
       return normalizeQueueSummaryRow({});
     }
 
@@ -570,7 +570,7 @@ function createTelegramUserFilesRepository(sqliteClient) {
         SUM(CASE WHEN file_size IS NULL THEN 1 ELSE 0 END) AS unknown_size_files
       FROM telegram_user_files
       WHERE status = 'archived'
-        AND ${fileNameCondition};
+        AND ${searchCondition};
     `);
 
     return normalizeQueueSummaryRow(rows[0] || {});
@@ -1001,14 +1001,18 @@ function optionalValue(value) {
   return value === undefined ? null : value;
 }
 
-function buildFileNameSearchCondition(searchTerm) {
+function buildFileSearchCondition(searchTerm) {
   if (typeof searchTerm !== 'string' || searchTerm.trim().length === 0) {
     return null;
   }
 
   const pattern = `%${escapeLikePattern(searchTerm.trim())}%`;
+  const sqlPattern = toSqlValue(pattern);
 
-  return `LOWER(COALESCE(file_name, '')) LIKE LOWER(${toSqlValue(pattern)}) ESCAPE '\\'`;
+  return `(
+    LOWER(COALESCE(file_name, '')) LIKE LOWER(${sqlPattern}) ESCAPE '\\'
+    OR LOWER(COALESCE(author, '')) LIKE LOWER(${sqlPattern}) ESCAPE '\\'
+  )`;
 }
 
 function escapeLikePattern(value) {
