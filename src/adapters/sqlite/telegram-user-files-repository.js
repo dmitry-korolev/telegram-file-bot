@@ -329,13 +329,15 @@ function createTelegramUserFilesRepository(sqliteClient) {
 
   function getPotentialDuplicateQueueGroup() {
     const sizeRows = sqliteClient.query(`
-      SELECT file_size
+      SELECT
+        file_size,
+        file_size * COUNT(*) AS total_size
       FROM telegram_user_files
       WHERE status = 'pending_manual_download'
         AND file_size IS NOT NULL
       GROUP BY file_size
       HAVING COUNT(*) >= 2
-      ORDER BY file_size DESC
+      ORDER BY total_size DESC, file_size DESC
       LIMIT 1;
     `);
 

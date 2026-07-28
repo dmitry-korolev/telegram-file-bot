@@ -403,9 +403,20 @@ function createTelegramUpdateHandler(dependencies) {
       };
     }
 
-    await deps.callbackResponder.answerCallbackQuery({
-      callbackQueryId: callbackQuery.id
-    });
+    try {
+      await deps.callbackResponder.answerCallbackQuery({
+        callbackQueryId: callbackQuery.id
+      });
+    } catch (error) {
+      if (!isExpiredCallbackQueryAnswerError(error)) {
+        throw error;
+      }
+
+      logger.warn('callback query answer expired; continuing', {
+        callbackQueryId: callbackQuery.id,
+        error
+      });
+    }
 
     if (callbackQuery.data === CALLBACK_SHOW_NEXT_FILES) {
       return showManualDownloadBatch(callbackQuery, 'queue');
@@ -1699,6 +1710,10 @@ function delay(ms) {
 
 function getErrorMessage(error) {
   return error && error.message ? error.message : String(error || 'unknown_error');
+}
+
+function isExpiredCallbackQueryAnswerError(error) {
+  return /(query is too old|response timeout expired|query id is invalid)/i.test(getErrorMessage(error));
 }
 
 function normalizeLogger(logger) {

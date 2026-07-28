@@ -17,7 +17,7 @@ function runTests() {
   testPendingManualDownloadQueuePrioritizesPhotoAndVideo();
   testPendingManualDownloadQueueCanSortByLargestKnownSize();
   testPendingManualDownloadQueueCanSortBySmallestKnownSize();
-  testPotentialDuplicateQueueGroupUsesLargestRepeatedKnownSize();
+  testPotentialDuplicateQueueGroupUsesLargestAggregateSize();
   testPendingManualDownloadQueueIsGlobalAcrossUsers();
   testPendingManualDownloadQueueFallsBackToDocuments();
   testManualDownloadQueueIncludesActiveStatuses();
@@ -350,11 +350,11 @@ function testPendingManualDownloadQueueCanSortBySmallestKnownSize() {
   });
 }
 
-function testPotentialDuplicateQueueGroupUsesLargestRepeatedKnownSize() {
+function testPotentialDuplicateQueueGroupUsesLargestAggregateSize() {
   withRepository((repository) => {
     repository.create(createRecord({
-      file_id: 'small-dup-late',
-      file_unique_id: 'small-dup-late-unique',
+      file_id: 'small-dup-1',
+      file_unique_id: 'small-dup-1-unique',
       file_size: 40,
       queue_position: 6
     }));
@@ -392,10 +392,34 @@ function testPotentialDuplicateQueueGroupUsesLargestRepeatedKnownSize() {
       status: 'shown_to_user'
     }));
     repository.create(createRecord({
-      file_id: 'small-dup-early',
-      file_unique_id: 'small-dup-early-unique',
+      file_id: 'small-dup-2',
+      file_unique_id: 'small-dup-2-unique',
       file_size: 40,
       queue_position: 7
+    }));
+    repository.create(createRecord({
+      file_id: 'small-dup-3',
+      file_unique_id: 'small-dup-3-unique',
+      file_size: 40,
+      queue_position: 8
+    }));
+    repository.create(createRecord({
+      file_id: 'small-dup-4',
+      file_unique_id: 'small-dup-4-unique',
+      file_size: 40,
+      queue_position: 9
+    }));
+    repository.create(createRecord({
+      file_id: 'small-dup-5',
+      file_unique_id: 'small-dup-5-unique',
+      file_size: 40,
+      queue_position: 10
+    }));
+    repository.create(createRecord({
+      file_id: 'small-dup-6',
+      file_unique_id: 'small-dup-6-unique',
+      file_size: 40,
+      queue_position: 11
     }));
 
     const group = repository.getPotentialDuplicateQueueGroup();
@@ -403,11 +427,18 @@ function testPotentialDuplicateQueueGroupUsesLargestRepeatedKnownSize() {
 
     assert.deepStrictEqual(
       group.map((item) => item.file_unique_id),
-      ['large-dup-early-unique', 'large-dup-late-unique']
+      [
+        'small-dup-1-unique',
+        'small-dup-2-unique',
+        'small-dup-3-unique',
+        'small-dup-4-unique',
+        'small-dup-5-unique',
+        'small-dup-6-unique'
+      ]
     );
     assert.deepStrictEqual(summary, {
       groupCount: 2,
-      fileCount: 4
+      fileCount: 8
     });
   });
 }

@@ -63,7 +63,7 @@ Available buttons:
 - `Показать следующие вложения` — sends the next batch of up to 10 queued files. Successfully sent files are immediately marked as `download_confirmed`.
 - `10 самых больших` — sends up to 10 queued files with the largest known size.
 - `10 самых маленьких` — sends up to 10 queued files with the smallest known size.
-- `Показать возможные дубликаты` — sends the largest same-size group from the queue when at least two pending files have the exact same known byte size. Successfully sent files are immediately marked as `download_confirmed`.
+- `Показать возможные дубликаты` — sends a group of at least two pending files with the same exact known byte size. Groups are ordered by aggregate size (`one file size × files in group`) from largest to smallest; ties prefer the larger individual file size. Successfully sent files are immediately marked as `download_confirmed`.
 - `Вернуть в очередь` — returns that specific delivered file to the queue as not downloaded.
 - `Вернуть в архив` — returns that specific delivered file to the archive.
 - `Очистить очередь` — confirms `/clear_queue`.

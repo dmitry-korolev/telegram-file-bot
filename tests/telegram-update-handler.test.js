@@ -70,11 +70,13 @@ async function runTests() {
   await testClearQueueCommandRequestsConfirmation();
   await testConfirmClearQueueMarksRecordsDeleted();
   await testUnauthorizedCallbackIsIgnored();
+  await testExpiredCallbackAnswerDoesNotBlockAction();
+  await testUnexpectedCallbackAnswerFailureStopsAction();
   await testShowNextFilesSendsAtMostTenAndMarksShown();
   await testManualDownloadUsesAuthorAsOnlyCaption();
   await testShowLargestFilesUsesSizeDescendingOrder();
   await testShowSmallestFilesUsesSizeAscendingOrder();
-  await testShowPossibleDuplicatesSendsLargestSameSizeGroup();
+  await testShowPossibleDuplicatesSendsLargestAggregateGroup();
   await testShowPossibleDuplicatesReportsEmptyQueue();
   await testShowNextFilesConfirmsPreviouslyShownFirst();
   await testShowNextFilesUsesQueueSummaryForRemainingCount();
@@ -1402,6 +1404,78 @@ async function testUnauthorizedCallbackIsIgnored() {
   assert.deepStrictEqual(deps.fileSender.calls, []);
 }
 
+async function testExpiredCallbackAnswerDoesNotBlockAction() {
+  const warnings = [];
+  const deps = createMockDependencies({
+    pendingQueue: [
+      createRepositoryRecord({
+        id: 15,
+        file_id: 'file-after-expired-callback',
+        file_unique_id: 'unique-after-expired-callback',
+        file_kind: 'photo'
+      })
+    ],
+    logger: {
+      warn(message, details) {
+        warnings.push({ message, details });
+      }
+    }
+  });
+  const callbackError = new Error(
+    'Telegram API answerCallbackQuery failed: Bad Request: query is too old and response timeout expired or query ID is invalid'
+  );
+  deps.callbackResponder.answerCallbackQuery = async function answerCallbackQuery(payload) {
+    this.calls.push(payload);
+    throw callbackError;
+  };
+  const handler = createTelegramUpdateHandler(deps);
+
+  const result = await handler.handleUpdate({
+    update_id: 141,
+    callback_query: createCallbackQuery(CALLBACK_SHOW_NEXT_FILES)
+  });
+
+  assert.strictEqual(result.reason, 'manual_download_batch_shown');
+  assert.deepStrictEqual(deps.fileRepository.confirmedIds, [15]);
+  assert.deepStrictEqual(
+    deps.fileSender.calls.map((call) => call.fileId),
+    ['file-after-expired-callback']
+  );
+  assert.strictEqual(warnings.length, 1);
+  assert.strictEqual(warnings[0].message, 'callback query answer expired; continuing');
+  assert.strictEqual(warnings[0].details.callbackQueryId, `callback-${CALLBACK_SHOW_NEXT_FILES}`);
+  assert.strictEqual(warnings[0].details.error, callbackError);
+}
+
+async function testUnexpectedCallbackAnswerFailureStopsAction() {
+  const deps = createMockDependencies({
+    pendingQueue: [
+      createRepositoryRecord({
+        id: 16,
+        file_id: 'file-after-failed-callback',
+        file_unique_id: 'unique-after-failed-callback',
+        file_kind: 'photo'
+      })
+    ]
+  });
+  deps.callbackResponder.answerCallbackQuery = async function answerCallbackQuery(payload) {
+    this.calls.push(payload);
+    throw new Error('Telegram API answerCallbackQuery failed: Forbidden');
+  };
+  const handler = createTelegramUpdateHandler(deps);
+
+  await assert.rejects(
+    handler.handleUpdate({
+      update_id: 142,
+      callback_query: createCallbackQuery(CALLBACK_SHOW_NEXT_FILES)
+    }),
+    /answerCallbackQuery failed: Forbidden/
+  );
+
+  assert.deepStrictEqual(deps.fileRepository.confirmedIds, []);
+  assert.deepStrictEqual(deps.fileSender.calls, []);
+}
+
 async function testShowNextFilesSendsAtMostTenAndMarksShown() {
   const pendingQueue = [];
 
@@ -1513,14 +1587,17 @@ async function testShowSmallestFilesUsesSizeAscendingOrder() {
   assert.deepStrictEqual(deps.fileRepository.lastPendingQueueOptions.orderBy, 'size_asc');
 }
 
-async function testShowPossibleDuplicatesSendsLargestSameSizeGroup() {
+async function testShowPossibleDuplicatesSendsLargestAggregateGroup() {
   const deps = createMockDependencies({
     pendingQueue: [
       createRepositoryRecord({ id: 1, file_id: 'largest-unique-file', file_unique_id: 'largest-unique', file_size: 100, file_kind: 'document' }),
       createRepositoryRecord({ id: 2, file_id: 'small-dup-1', file_unique_id: 'small-dup-1-unique', file_size: 40, file_kind: 'document' }),
       createRepositoryRecord({ id: 3, file_id: 'large-dup-2', file_unique_id: 'large-dup-2-unique', file_size: 80, file_kind: 'video', queue_position: 3 }),
       createRepositoryRecord({ id: 4, file_id: 'large-dup-1', file_unique_id: 'large-dup-1-unique', file_size: 80, file_kind: 'photo', queue_position: 2 }),
-      createRepositoryRecord({ id: 5, file_id: 'small-dup-2', file_unique_id: 'small-dup-2-unique', file_size: 40, file_kind: 'document' })
+      createRepositoryRecord({ id: 5, file_id: 'small-dup-2', file_unique_id: 'small-dup-2-unique', file_size: 40, file_kind: 'document' }),
+      createRepositoryRecord({ id: 6, file_id: 'small-dup-3', file_unique_id: 'small-dup-3-unique', file_size: 40, file_kind: 'photo' }),
+      createRepositoryRecord({ id: 7, file_id: 'small-dup-4', file_unique_id: 'small-dup-4-unique', file_size: 40, file_kind: 'video' }),
+      createRepositoryRecord({ id: 8, file_id: 'small-dup-5', file_unique_id: 'small-dup-5-unique', file_size: 40, file_kind: 'document' })
     ]
   });
   const handler = createTelegramUpdateHandler(deps);
@@ -1533,15 +1610,15 @@ async function testShowPossibleDuplicatesSendsLargestSameSizeGroup() {
   assert.strictEqual(result.reason, 'potential_duplicates_batch_shown');
   assert.deepStrictEqual(
     deps.fileSender.calls.map((call) => call.fileId),
-    ['large-dup-1', 'large-dup-2']
+    ['small-dup-1', 'small-dup-2', 'small-dup-3', 'small-dup-4', 'small-dup-5']
   );
-  assert.deepStrictEqual(deps.fileRepository.confirmedIds, [4, 3]);
+  assert.deepStrictEqual(deps.fileRepository.confirmedIds, [2, 5, 6, 7, 8]);
   assert.deepStrictEqual(
     deps.fileRepository.sentFiles.map((sentFile) => sentFile.file_record_id),
-    [4, 3]
+    [2, 5, 6, 7, 8]
   );
   deps.fileSender.calls.forEach((call) => assertFileActionsKeyboard(call.replyMarkup));
-  assert.strictEqual(deps.messageSender.calls[0].text, 'Показано возможных дубликатов: 2. Они отмечены как скачанные. Осталось групп: 1.');
+  assert.strictEqual(deps.messageSender.calls[0].text, 'Показано возможных дубликатов: 5. Они отмечены как скачанные. Осталось групп: 1.');
 }
 
 async function testShowPossibleDuplicatesReportsEmptyQueue() {
@@ -2249,7 +2326,11 @@ function getPotentialDuplicateGroups(records) {
       fileSize: entry[0],
       records: entry[1].slice().sort(compareQueueOrder)
     }))
-    .sort((left, right) => right.fileSize - left.fileSize);
+    .sort((left, right) => {
+      const totalSizeDifference = (right.fileSize * right.records.length) - (left.fileSize * left.records.length);
+
+      return totalSizeDifference || right.fileSize - left.fileSize;
+    });
 }
 
 function compareQueueOrder(left, right) {
