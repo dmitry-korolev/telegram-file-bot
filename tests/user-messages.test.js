@@ -7,10 +7,13 @@ const {
   buildArchiveFileNotFoundMessage,
   buildArchiveReplyRequiredMessage,
   buildArchiveSummaryMessage,
+  buildDownloadedSummaryMessage,
   buildSearchArchiveSummaryMessage,
+  buildSearchDownloadedSummaryMessage,
   buildSearchQueueSummaryMessage,
   buildSearchTermRequiredMessage,
   buildShownArchiveFilesMessage,
+  buildShownDownloadedFilesMessage,
   buildShownFilesMessage,
   buildQueueMessage,
   buildQueueFileNotFoundMessage,
@@ -30,6 +33,7 @@ function runTests() {
   testQueueMessageUsesSummaryOnly();
   testQueueSummaryMessageUsesAggregate();
   testArchiveSummaryMessageUsesAggregate();
+  testDownloadedSummaryMessageUsesAggregate();
   testSearchMessages();
   testStatsMessage();
   testShowNextKeyboardIncludesQueueAndSizeActions();
@@ -166,7 +170,7 @@ function testArchiveMessages() {
   );
   assert.strictEqual(
     buildArchiveReplyRequiredMessage(),
-    'Отправьте /archive в ответ на медиа, которое бот прислал из очереди или архива.'
+    'Отправьте /archive в ответ на медиа, которое прислал бот.'
   );
   assert.strictEqual(buildArchiveFileNotFoundMessage(), 'Не удалось найти файл для этого сообщения.');
   assert.strictEqual(buildArchiveConfirmedMessage(), 'Файл перемещен в архив.');
@@ -175,7 +179,7 @@ function testArchiveMessages() {
 function testQueueReturnMessages() {
   assert.strictEqual(
     buildQueueReplyRequiredMessage(),
-    'Отправьте /queue в ответ на медиа, которое бот прислал из очереди или архива.'
+    'Отправьте /queue в ответ на медиа, которое прислал бот.'
   );
   assert.strictEqual(buildQueueFileNotFoundMessage(), 'Не удалось найти файл для этого сообщения.');
   assert.strictEqual(buildQueueReturnConfirmedMessage(), 'Файл возвращен в очередь.');
@@ -242,8 +246,36 @@ function testSearchMessages() {
     'Поиск в архиве по "clip": В архиве файлов: 1. Суммарный объем: 10.0 МБ.'
   );
   assert.strictEqual(
+    buildSearchDownloadedSummaryMessage('keeper', {
+      fileCount: 2,
+      totalKnownSize: 30 * 1024 * 1024,
+      unknownSizeFiles: 0
+    }),
+    'Поиск среди скачанных по "keeper": Скачанных файлов: 2. Суммарный объем: 30.0 МБ.'
+  );
+  assert.strictEqual(
     buildSearchTermRequiredMessage('/search_queue'),
     'Укажите поисковый запрос: /search_queue <search_term>'
+  );
+}
+
+function testDownloadedSummaryMessageUsesAggregate() {
+  assert.strictEqual(
+    buildDownloadedSummaryMessage({
+      fileCount: 2,
+      totalKnownSize: 30 * 1024 * 1024,
+      unknownSizeFiles: 0
+    }),
+    'Скачанных файлов: 2. Суммарный объем: 30.0 МБ.'
+  );
+  assert.strictEqual(buildDownloadedSummaryMessage({ fileCount: 0 }), 'Скачанных файлов нет.');
+  assert.strictEqual(
+    buildShownDownloadedFilesMessage(2, 1),
+    'Показано скачанных файлов: 2. Статусы не изменены. Осталось найденных: 1.'
+  );
+  assert.strictEqual(
+    buildShownDownloadedFilesMessage(0, 0),
+    'Больше скачанных файлов по этому поиску нет.'
   );
 }
 

@@ -65,6 +65,7 @@ async function runTests() {
   await testArchiveCommandMarksReplyFileArchived();
   await testShowArchiveCommandShowsArchiveSummary();
   await testSearchArchiveCommandShowsFilteredArchiveAndButtons();
+  await testSearchDownloadedShowsDistinctBatchesWithoutChangingStatuses();
   await testStatsCommandShowsAggregateStats();
   await testStatsImageCommandSendsPngPhoto();
   await testClearQueueCommandRequestsConfirmation();
@@ -1192,7 +1193,7 @@ async function testQueueCommandRequiresReply() {
   });
 
   assert.strictEqual(result.reason, 'queue_reply_required');
-  assert.strictEqual(deps.messageSender.calls[0].text, 'Отправьте /queue в ответ на медиа, которое бот прислал из очереди или архива.');
+  assert.strictEqual(deps.messageSender.calls[0].text, 'Отправьте /queue в ответ на медиа, которое прислал бот.');
 }
 
 async function testQueueCommandReportsUnknownReply() {
@@ -1255,7 +1256,7 @@ async function testArchiveCommandRequiresReply() {
   });
 
   assert.strictEqual(result.reason, 'archive_reply_required');
-  assert.strictEqual(deps.messageSender.calls[0].text, 'Отправьте /archive в ответ на медиа, которое бот прислал из очереди или архива.');
+  assert.strictEqual(deps.messageSender.calls[0].text, 'Отправьте /archive в ответ на медиа, которое прислал бот.');
 }
 
 async function testArchiveCommandReportsUnknownReply() {
@@ -1352,6 +1353,84 @@ async function testSearchArchiveCommandShowsFilteredArchiveAndButtons() {
   assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[1][0].callback_data.startsWith('search_archive_largest:'), true);
   assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard[1][1].callback_data.startsWith('search_archive_smallest:'), true);
   assert.strictEqual(deps.messageSender.calls[0].replyMarkup.inline_keyboard.length, 2);
+}
+
+async function testSearchDownloadedShowsDistinctBatchesWithoutChangingStatuses() {
+  const downloadedFiles = [];
+
+  for (let index = 1; index <= 12; index += 1) {
+    downloadedFiles.push(createRepositoryRecord({
+      id: 100 + index,
+      queue_position: index,
+      file_id: `downloaded-file-${index}`,
+      file_unique_id: `downloaded-unique-${index}`,
+      file_name: `keeper-${index}.bin`,
+      author: 'Download Keeper',
+      file_size: 1024 * 1024,
+      file_kind: index % 3 === 0 ? 'video' : index % 2 === 0 ? 'photo' : 'document',
+      status: index % 2 === 0 ? 'download_confirmed' : 'downloaded'
+    }));
+  }
+
+  const deps = createMockDependencies({ downloadedFiles });
+  const handler = createTelegramUpdateHandler(deps);
+  const commandResult = await handler.handleUpdate({
+    update_id: 551,
+    message: createMessage({ text: '/search_downloaded keeper' })
+  });
+
+  assert.strictEqual(commandResult.reason, 'search_downloaded_command');
+  assert.strictEqual(
+    deps.messageSender.calls[0].text,
+    'Поиск среди скачанных по "keeper": Скачанных файлов: 12. Суммарный объем: 12.0 МБ.'
+  );
+  assert.strictEqual(
+    deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].callback_data.startsWith('search_downloaded_next:'),
+    true
+  );
+  assert.strictEqual(
+    deps.messageSender.calls[0].replyMarkup.inline_keyboard[1][0].callback_data.startsWith('search_downloaded_largest:'),
+    true
+  );
+  assert.strictEqual(
+    deps.messageSender.calls[0].replyMarkup.inline_keyboard[1][1].callback_data.startsWith('search_downloaded_smallest:'),
+    true
+  );
+
+  const callbackData = deps.messageSender.calls[0].replyMarkup.inline_keyboard[0][0].callback_data;
+  const firstBatch = await handler.handleUpdate({
+    update_id: 552,
+    callback_query: createCallbackQuery(callbackData)
+  });
+  const secondBatch = await handler.handleUpdate({
+    update_id: 553,
+    callback_query: createCallbackQuery(callbackData)
+  });
+
+  assert.strictEqual(firstBatch.reason, 'search_downloaded_batch_shown');
+  assert.strictEqual(secondBatch.reason, 'search_downloaded_batch_shown');
+  assert.deepStrictEqual(
+    deps.fileSender.calls.map((call) => call.fileId),
+    downloadedFiles.map((file) => file.file_id)
+  );
+  deps.fileSender.calls.forEach((call) => assertFileActionsKeyboard(call.replyMarkup));
+  assert.strictEqual(
+    deps.messageSender.calls[1].text,
+    'Показано скачанных файлов: 10. Статусы не изменены. Осталось найденных: 2.'
+  );
+  assert.strictEqual(
+    deps.messageSender.calls[2].text,
+    'Показано скачанных файлов: 2. Статусы не изменены. Осталось найденных: 0.'
+  );
+  assert.deepStrictEqual(deps.fileRepository.confirmedIds, []);
+  assert.deepStrictEqual(
+    deps.fileRepository.downloadedFiles.map((file) => file.status),
+    downloadedFiles.map((file) => file.status)
+  );
+  assert.strictEqual(
+    deps.fileRepository.sentFiles.every((sentFile) => sentFile.source === 'downloaded'),
+    true
+  );
 }
 
 async function testClearQueueCommandRequestsConfirmation() {
@@ -1775,6 +1854,7 @@ function createMockDependencies(options) {
     pendingQueue: normalizedOptions.pendingQueue || [],
     manualQueue: normalizedOptions.manualQueue || normalizedOptions.pendingQueue || [],
     archiveQueue: normalizedOptions.archiveQueue || [],
+    downloadedFiles: normalizedOptions.downloadedFiles || [],
     queueSummary: normalizedOptions.queueSummary || null,
     pendingSummary: normalizedOptions.pendingSummary || null,
     potentialDuplicateSummary: normalizedOptions.potentialDuplicateSummary || null,
@@ -1849,6 +1929,7 @@ function createMockDependencies(options) {
         .concat(this.pendingQueue)
         .concat(this.manualQueue)
         .concat(this.archiveQueue)
+        .concat(this.downloadedFiles)
         .find((record) => record.id === recordId) || null;
     },
     async incrementMetaCounter(key, incrementBy) {
@@ -2038,6 +2119,46 @@ function createMockDependencies(options) {
       const archived = filterByFileNameOrAuthor(this.archiveQueue.filter((record) => record.status === 'archived'), searchTerm);
       return buildMockSummary(archived);
     },
+    async searchDownloadedFiles(searchTerm, options) {
+      const normalizedSearchOptions = options || {};
+      const limit = normalizedSearchOptions.limit || 10;
+      const orderBy = normalizedSearchOptions.orderBy || 'queue';
+      const excludedRecordIds = new Set(normalizedSearchOptions.excludedRecordIds || []);
+      const matching = filterByFileNameOrAuthor(
+        this.downloadedFiles.filter((record) => (
+          ['downloaded', 'download_confirmed'].includes(record.status)
+          && !excludedRecordIds.has(record.id)
+        )),
+        searchTerm
+      );
+
+      if (orderBy === 'size_desc' || orderBy === 'size_asc') {
+        return matching
+          .filter((record) => Number.isFinite(record.file_size))
+          .slice()
+          .sort((left, right) => (
+            orderBy === 'size_desc'
+              ? right.file_size - left.file_size || compareQueueOrder(left, right)
+              : left.file_size - right.file_size || compareQueueOrder(left, right)
+          ))
+          .slice(0, limit);
+      }
+
+      return matching.slice().sort(compareQueueOrder).slice(0, limit);
+    },
+    async searchDownloadedSummary(searchTerm, options) {
+      const normalizedSearchOptions = options || {};
+      const excludedRecordIds = new Set(normalizedSearchOptions.excludedRecordIds || []);
+      const matching = filterByFileNameOrAuthor(
+        this.downloadedFiles.filter((record) => (
+          ['downloaded', 'download_confirmed'].includes(record.status)
+          && !excludedRecordIds.has(record.id)
+        )),
+        searchTerm
+      );
+
+      return buildMockSummary(matching);
+    },
     async getShownToUserFiles() {
       return this.shownQueue;
     },
@@ -2113,11 +2234,15 @@ function createMockDependencies(options) {
       this.archiveQueue = this.archiveQueue.map((record) => (
         recordIds.includes(record.id) ? Object.assign({}, record, { status: 'archived', download_confirmed_at: null }) : record
       ));
+      this.downloadedFiles = this.downloadedFiles.map((record) => (
+        recordIds.includes(record.id) ? Object.assign({}, record, { status: 'archived', download_confirmed_at: null }) : record
+      ));
       return recordIds.map((id) => Object.assign(
         {},
         this.pendingQueue.find((record) => record.id === id) ||
           this.manualQueue.find((record) => record.id === id) ||
-          this.archiveQueue.find((record) => record.id === id),
+          this.archiveQueue.find((record) => record.id === id) ||
+          this.downloadedFiles.find((record) => record.id === id),
         { id, status: 'archived', download_confirmed_at: null }
       ));
     },
@@ -2137,10 +2262,12 @@ function createMockDependencies(options) {
       this.pendingQueue = this.pendingQueue.map(updateRecord);
       this.manualQueue = this.manualQueue.map(updateRecord);
       this.archiveQueue = this.archiveQueue.map(updateRecord);
+      this.downloadedFiles = this.downloadedFiles.map(updateRecord);
       return recordIds.map((id) => {
         const record = this.pendingQueue.find((item) => item.id === id) ||
           this.manualQueue.find((item) => item.id === id) ||
-          this.archiveQueue.find((item) => item.id === id);
+          this.archiveQueue.find((item) => item.id === id) ||
+          this.downloadedFiles.find((item) => item.id === id);
 
         return Object.assign({}, record, {
           id,

@@ -27,6 +27,8 @@ function createTelegramUserFilesRepository(sqliteClient) {
     getArchiveSummary,
     searchArchiveQueue,
     searchArchiveSummary,
+    searchDownloadedFiles,
+    searchDownloadedSummary,
     getShownToUserFiles,
     getStats,
     getStatsImageData,
@@ -578,6 +580,66 @@ function createTelegramUserFilesRepository(sqliteClient) {
     return normalizeQueueSummaryRow(rows[0] || {});
   }
 
+  function searchDownloadedFiles(searchTerm, options) {
+    const normalizedOptions = options || {};
+    const limit = normalizePositiveInteger(normalizedOptions.limit, 10);
+    const orderBy = normalizedOptions.orderBy || 'queue';
+    const searchCondition = buildFileSearchCondition(searchTerm);
+    const exclusionCondition = buildExcludedRecordIdsCondition(normalizedOptions.excludedRecordIds);
+
+    if (!searchCondition) {
+      return [];
+    }
+
+    if (orderBy === 'size_desc' || orderBy === 'size_asc') {
+      const direction = orderBy === 'size_desc' ? 'DESC' : 'ASC';
+
+      return sqliteClient.query(`
+        SELECT *
+        FROM telegram_user_files
+        WHERE status IN ('downloaded', 'download_confirmed')
+          AND file_size IS NOT NULL
+          AND ${searchCondition}
+          AND ${exclusionCondition}
+        ORDER BY file_size ${direction}, received_at ASC, id ASC
+        LIMIT ${limit};
+      `);
+    }
+
+    return sqliteClient.query(`
+      SELECT *
+      FROM telegram_user_files
+      WHERE status IN ('downloaded', 'download_confirmed')
+        AND ${searchCondition}
+        AND ${exclusionCondition}
+      ORDER BY received_at ASC, id ASC
+      LIMIT ${limit};
+    `);
+  }
+
+  function searchDownloadedSummary(searchTerm, options) {
+    const normalizedOptions = options || {};
+    const searchCondition = buildFileSearchCondition(searchTerm);
+    const exclusionCondition = buildExcludedRecordIdsCondition(normalizedOptions.excludedRecordIds);
+
+    if (!searchCondition) {
+      return normalizeQueueSummaryRow({});
+    }
+
+    const rows = sqliteClient.query(`
+      SELECT
+        COUNT(*) AS file_count,
+        COALESCE(SUM(CASE WHEN file_size IS NOT NULL THEN file_size ELSE 0 END), 0) AS total_known_size,
+        SUM(CASE WHEN file_size IS NULL THEN 1 ELSE 0 END) AS unknown_size_files
+      FROM telegram_user_files
+      WHERE status IN ('downloaded', 'download_confirmed')
+        AND ${searchCondition}
+        AND ${exclusionCondition};
+    `);
+
+    return normalizeQueueSummaryRow(rows[0] || {});
+  }
+
   function getShownToUserFiles() {
     return sqliteClient.query(`
       SELECT *
@@ -787,7 +849,7 @@ function createTelegramUserFilesRepository(sqliteClient) {
           download_confirmed_at = NULL,
           updated_at = ${toSqlValue(timestamp)}
       WHERE id IN (${idsSql})
-        AND status IN ('pending_manual_download', 'pending_size_unknown', 'shown_to_user', 'download_confirmed', 'archived')
+        AND status IN ('pending_manual_download', 'pending_size_unknown', 'shown_to_user', 'downloaded', 'download_confirmed', 'archived')
       RETURNING *;
     `);
   }
@@ -812,7 +874,7 @@ function createTelegramUserFilesRepository(sqliteClient) {
           download_confirmed_at = NULL,
           updated_at = ${toSqlValue(timestamp)}
       WHERE id IN (${idsSql})
-        AND status IN ('pending_manual_download', 'pending_size_unknown', 'shown_to_user', 'download_confirmed', 'archived')
+        AND status IN ('pending_manual_download', 'pending_size_unknown', 'shown_to_user', 'downloaded', 'download_confirmed', 'archived')
       RETURNING *;
     `);
   }
@@ -1015,6 +1077,18 @@ function buildFileSearchCondition(searchTerm) {
     LOWER(COALESCE(file_name, '')) LIKE LOWER(${sqlPattern}) ESCAPE '\\'
     OR LOWER(COALESCE(author, '')) LIKE LOWER(${sqlPattern}) ESCAPE '\\'
   )`;
+}
+
+function buildExcludedRecordIdsCondition(recordIds) {
+  const normalizedIds = Array.isArray(recordIds)
+    ? Array.from(new Set(recordIds.filter(isPositiveInteger)))
+    : [];
+
+  if (normalizedIds.length === 0) {
+    return '1 = 1';
+  }
+
+  return `id NOT IN (${normalizedIds.map(toSqlValue).join(', ')})`;
 }
 
 function escapeLikePattern(value) {

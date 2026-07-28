@@ -20,6 +20,7 @@ function testBotCommandsIncludePublicCommands() {
       'show_archive',
       'search_archive',
       'archive',
+      'search_downloaded',
       'stats',
       'stats_image',
       'clear_queue'
@@ -33,6 +34,10 @@ function testBotCommandsIncludePublicCommands() {
   assert.strictEqual(
     BOT_COMMANDS.find((command) => command.command === 'search_archive').description,
     'Найти файл или автора в архиве'
+  );
+  assert.strictEqual(
+    BOT_COMMANDS.find((command) => command.command === 'search_downloaded').description,
+    'Найти среди скачанных файлов'
   );
 }
 

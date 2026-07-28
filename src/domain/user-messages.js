@@ -156,12 +156,30 @@ function buildArchiveSummaryMessage(summary) {
   return `В архиве файлов: ${fileCount}. Суммарный объем: ${formatFileSize(normalizedSummary.totalKnownSize || 0)}${unknownSizeText}.`;
 }
 
+function buildDownloadedSummaryMessage(summary) {
+  const normalizedSummary = summary || {};
+  const fileCount = normalizedSummary.fileCount || 0;
+
+  if (fileCount === 0) {
+    return 'Скачанных файлов нет.';
+  }
+
+  const unknownSizeCount = normalizedSummary.unknownSizeFiles || 0;
+  const unknownSizeText = unknownSizeCount > 0 ? `, файлов с неизвестным размером: ${unknownSizeCount}` : '';
+
+  return `Скачанных файлов: ${fileCount}. Суммарный объем: ${formatFileSize(normalizedSummary.totalKnownSize || 0)}${unknownSizeText}.`;
+}
+
 function buildSearchQueueSummaryMessage(searchTerm, summary) {
   return `Поиск в очереди по "${searchTerm}": ${buildQueueSummaryMessage(summary)}`;
 }
 
 function buildSearchArchiveSummaryMessage(searchTerm, summary) {
   return `Поиск в архиве по "${searchTerm}": ${buildArchiveSummaryMessage(summary)}`;
+}
+
+function buildSearchDownloadedSummaryMessage(searchTerm, summary) {
+  return `Поиск среди скачанных по "${searchTerm}": ${buildDownloadedSummaryMessage(summary)}`;
 }
 
 function buildSearchTermRequiredMessage(commandName) {
@@ -224,6 +242,16 @@ function buildShownArchiveFilesMessage(shownCount, remainingCount) {
   return `Показано вложений из архива: ${shownCount}. Они отмечены как скачанные. Осталось в архиве: 0.`;
 }
 
+function buildShownDownloadedFilesMessage(shownCount, remainingCount) {
+  if (shownCount === 0) {
+    return remainingCount > 0
+      ? 'Не удалось показать скачанные файлы.'
+      : 'Больше скачанных файлов по этому поиску нет.';
+  }
+
+  return `Показано скачанных файлов: ${shownCount}. Статусы не изменены. Осталось найденных: ${remainingCount}.`;
+}
+
 function buildShownPotentialDuplicateFilesMessage(shownCount, remainingGroupCount) {
   if (shownCount === 0) {
     return remainingGroupCount > 0 ? 'Не удалось показать возможные дубликаты.' : 'В очереди нет возможных дубликатов.';
@@ -233,7 +261,7 @@ function buildShownPotentialDuplicateFilesMessage(shownCount, remainingGroupCoun
 }
 
 function buildArchiveReplyRequiredMessage() {
-  return 'Отправьте /archive в ответ на медиа, которое бот прислал из очереди или архива.';
+  return 'Отправьте /archive в ответ на медиа, которое прислал бот.';
 }
 
 function buildArchiveFileNotFoundMessage() {
@@ -245,7 +273,7 @@ function buildArchiveConfirmedMessage() {
 }
 
 function buildQueueReplyRequiredMessage() {
-  return 'Отправьте /queue в ответ на медиа, которое бот прислал из очереди или архива.';
+  return 'Отправьте /queue в ответ на медиа, которое прислал бот.';
 }
 
 function buildQueueFileNotFoundMessage() {
@@ -342,13 +370,16 @@ module.exports = {
   buildQueueMessage,
   buildQueueSummaryMessage,
   buildArchiveSummaryMessage,
+  buildDownloadedSummaryMessage,
   buildSearchQueueSummaryMessage,
   buildSearchArchiveSummaryMessage,
+  buildSearchDownloadedSummaryMessage,
   buildSearchTermRequiredMessage,
   buildSearchContextExpiredMessage,
   buildStatsMessage,
   buildShownFilesMessage,
   buildShownArchiveFilesMessage,
+  buildShownDownloadedFilesMessage,
   buildShownPotentialDuplicateFilesMessage,
   buildArchiveReplyRequiredMessage,
   buildArchiveFileNotFoundMessage,

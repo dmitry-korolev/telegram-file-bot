@@ -9,6 +9,7 @@ const {
   buildArchiveSummaryMessage,
   buildClearQueueConfirmedMessage,
   buildClearQueuePrompt,
+  buildSearchDownloadedSummaryMessage,
   buildSingleFileResponse,
   buildQueueFileNotFoundMessage,
   buildQueueMessage,
@@ -22,6 +23,7 @@ const {
   buildSearchTermRequiredMessage,
   buildStatsMessage,
   buildShownArchiveFilesMessage,
+  buildShownDownloadedFilesMessage,
   buildShownFilesMessage,
   buildShownPotentialDuplicateFilesMessage,
   createClearQueueConfirmationKeyboard,
@@ -47,6 +49,9 @@ const CALLBACK_SEARCH_QUEUE_SMALLEST_PREFIX = 'search_queue_smallest:';
 const CALLBACK_SEARCH_ARCHIVE_NEXT_PREFIX = 'search_archive_next:';
 const CALLBACK_SEARCH_ARCHIVE_LARGEST_PREFIX = 'search_archive_largest:';
 const CALLBACK_SEARCH_ARCHIVE_SMALLEST_PREFIX = 'search_archive_smallest:';
+const CALLBACK_SEARCH_DOWNLOADED_NEXT_PREFIX = 'search_downloaded_next:';
+const CALLBACK_SEARCH_DOWNLOADED_LARGEST_PREFIX = 'search_downloaded_largest:';
+const CALLBACK_SEARCH_DOWNLOADED_SMALLEST_PREFIX = 'search_downloaded_smallest:';
 const CALLBACK_RETURN_FILE_TO_QUEUE = 'return_file_to_queue';
 const CALLBACK_RETURN_FILE_TO_ARCHIVE = 'return_file_to_archive';
 const MANUAL_DOWNLOAD_BATCH_SIZE = 10;
@@ -316,6 +321,10 @@ function createTelegramUpdateHandler(dependencies) {
       return handleArchiveCommand(message);
     }
 
+    if (commandName === '/search_downloaded') {
+      return handleSearchDownloadedCommand(message);
+    }
+
     if (commandName === '/stats') {
       const stats = await deps.fileRepository.getStats();
       const text = buildStatsMessage(stats);
@@ -468,6 +477,18 @@ function createTelegramUpdateHandler(dependencies) {
 
     if (callbackQuery.data && callbackQuery.data.startsWith(CALLBACK_SEARCH_ARCHIVE_SMALLEST_PREFIX)) {
       return showSearchBatch(callbackQuery, CALLBACK_SEARCH_ARCHIVE_SMALLEST_PREFIX, 'size_asc');
+    }
+
+    if (callbackQuery.data && callbackQuery.data.startsWith(CALLBACK_SEARCH_DOWNLOADED_NEXT_PREFIX)) {
+      return showSearchBatch(callbackQuery, CALLBACK_SEARCH_DOWNLOADED_NEXT_PREFIX, 'queue');
+    }
+
+    if (callbackQuery.data && callbackQuery.data.startsWith(CALLBACK_SEARCH_DOWNLOADED_LARGEST_PREFIX)) {
+      return showSearchBatch(callbackQuery, CALLBACK_SEARCH_DOWNLOADED_LARGEST_PREFIX, 'size_desc');
+    }
+
+    if (callbackQuery.data && callbackQuery.data.startsWith(CALLBACK_SEARCH_DOWNLOADED_SMALLEST_PREFIX)) {
+      return showSearchBatch(callbackQuery, CALLBACK_SEARCH_DOWNLOADED_SMALLEST_PREFIX, 'size_asc');
     }
 
     if (callbackQuery.data === CALLBACK_RETURN_FILE_TO_QUEUE) {
@@ -872,6 +893,47 @@ function createTelegramUpdateHandler(dependencies) {
     };
   }
 
+  async function handleSearchDownloadedCommand(message) {
+    const searchTerm = getCommandArgumentText(message);
+
+    if (!searchTerm) {
+      const text = buildSearchTermRequiredMessage('/search_downloaded');
+
+      await deps.messageSender.sendMessage({
+        chatId: message.chat && message.chat.id,
+        text
+      });
+
+      return {
+        accepted: true,
+        reason: 'search_downloaded_term_required',
+        files: [],
+        deleteMessageCalled: false,
+        sendMessageCalled: true,
+        responseText: text
+      };
+    }
+
+    const summary = await deps.fileRepository.searchDownloadedSummary(searchTerm);
+    const text = buildSearchDownloadedSummaryMessage(searchTerm, summary);
+    const contextId = createSearchContext('downloaded', searchTerm);
+
+    await deps.messageSender.sendMessage({
+      chatId: message.chat && message.chat.id,
+      text,
+      replyMarkup: summary.fileCount > 0 ? createSearchDownloadedKeyboard(contextId) : undefined
+    });
+
+    return {
+      accepted: true,
+      reason: 'search_downloaded_command',
+      files: [],
+      deleteMessageCalled: false,
+      sendMessageCalled: true,
+      responseText: text
+    };
+  }
+
   async function showManualDownloadBatch(callbackQuery, orderBy) {
     return showFileBatch(callbackQuery, {
       source: 'queue',
@@ -936,6 +998,32 @@ function createTelegramUpdateHandler(dependencies) {
         createKeyboard: () => createSearchArchiveKeyboard(contextId),
         reasonEmpty: 'search_archive_empty',
         reasonShown: 'search_archive_batch_shown'
+      });
+    }
+
+    if (context.source === 'downloaded') {
+      return showFileBatch(callbackQuery, {
+        source: 'downloaded',
+        orderBy,
+        getFiles: (options) => deps.fileRepository.searchDownloadedFiles(
+          context.searchTerm,
+          Object.assign({}, options, {
+            excludedRecordIds: Array.from(context.processedRecordIds)
+          })
+        ),
+        getRemainingCount: () => getRemainingSearchDownloadedCount(
+          context.searchTerm,
+          context.processedRecordIds
+        ),
+        onFilesProcessed: (files) => {
+          files.forEach((file) => context.processedRecordIds.add(file.id));
+        },
+        emptyText: 'Скачанных файлов по этому поиску нет.',
+        emptyAfterShownText: 'Больше скачанных файлов по этому поиску нет.',
+        buildShownMessage: buildShownDownloadedFilesMessage,
+        createKeyboard: () => createSearchDownloadedKeyboard(contextId),
+        reasonEmpty: 'search_downloaded_empty',
+        reasonShown: 'search_downloaded_batch_shown'
       });
     }
 
@@ -1012,14 +1100,23 @@ function createTelegramUpdateHandler(dependencies) {
         sentFiles.push(file);
       } catch (error) {
         failedFiles.push({ file, error });
-        const failed = await deps.fileRepository.markFilesAsSendFailed([file.id], error, now());
-        await logFileEvents(failed.length > 0 ? failed : [file], 'send_failed', 'send_failed', error);
+
+        if (options.source === 'downloaded') {
+          await logFileEvents([file], file.status, 'send_failed', error);
+        } else {
+          const failed = await deps.fileRepository.markFilesAsSendFailed([file.id], error, now());
+          await logFileEvents(failed.length > 0 ? failed : [file], 'send_failed', 'send_failed', error);
+        }
       }
     }
 
-    if (sentFiles.length > 0) {
+    if (sentFiles.length > 0 && options.source !== 'downloaded') {
       const confirmed = await deps.fileRepository.markFilesAsDownloadConfirmed(sentFiles.map((file) => file.id), now());
       await logFileEvents(confirmed, 'download_confirmed', 'download_confirmed');
+    }
+
+    if (typeof options.onFilesProcessed === 'function') {
+      await options.onFilesProcessed(queue);
     }
 
     const remainingCount = await options.getRemainingCount();
@@ -1248,6 +1345,13 @@ function createTelegramUpdateHandler(dependencies) {
     return summary && Number.isFinite(summary.fileCount) ? summary.fileCount : 0;
   }
 
+  async function getRemainingSearchDownloadedCount(searchTerm, processedRecordIds) {
+    const summary = await deps.fileRepository.searchDownloadedSummary(searchTerm, {
+      excludedRecordIds: Array.from(processedRecordIds || [])
+    });
+    return summary && Number.isFinite(summary.fileCount) ? summary.fileCount : 0;
+  }
+
   async function getRemainingPotentialDuplicateGroupCount() {
     if (typeof deps.fileRepository.getPotentialDuplicateQueueGroupSummary !== 'function') {
       return 0;
@@ -1294,9 +1398,24 @@ function createTelegramUpdateHandler(dependencies) {
     });
   }
 
+  function createSearchDownloadedKeyboard(contextId) {
+    return createShowNextFilesKeyboard({
+      callbackData: {
+        showNext: `${CALLBACK_SEARCH_DOWNLOADED_NEXT_PREFIX}${contextId}`,
+        showLargest: `${CALLBACK_SEARCH_DOWNLOADED_LARGEST_PREFIX}${contextId}`,
+        showSmallest: `${CALLBACK_SEARCH_DOWNLOADED_SMALLEST_PREFIX}${contextId}`,
+        showPotentialDuplicates: null
+      }
+    });
+  }
+
   function createSearchContext(source, searchTerm) {
     const contextId = (nextSearchContextId++).toString(36);
-    searchContexts.set(contextId, { source, searchTerm });
+    searchContexts.set(contextId, {
+      source,
+      searchTerm,
+      processedRecordIds: new Set()
+    });
     return contextId;
   }
 

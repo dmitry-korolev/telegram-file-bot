@@ -30,6 +30,10 @@ const BOT_COMMANDS = [
     description: 'Переместить файл в архив'
   },
   {
+    command: 'search_downloaded',
+    description: 'Найти среди скачанных файлов'
+  },
+  {
     command: 'stats',
     description: 'Показать статистику'
   },

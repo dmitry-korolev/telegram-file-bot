@@ -27,6 +27,7 @@ function runTests() {
   testSearchEscapesLikeWildcardsForFileNameAndAuthor();
   testArchiveQueueAndSummaryUseArchivedStatus();
   testSearchArchiveQueueByFileNameOrAuthor();
+  testSearchDownloadedFilesByFileNameOrAuthor();
   testGetShownToUserFilesReturnsShownRecords();
   testGetStatsAggregatesFiles();
   testGetStatsImageDataAggregatesBuckets();
@@ -37,6 +38,7 @@ function runTests() {
   testMarkFilesAsDownloadConfirmedUpdatesShownRecords();
   testMarkFilesAsArchivedResetsConfirmedState();
   testMarkFilesAsQueuedRestoresPendingState();
+  testDownloadedFilesCanReturnToQueueOrArchive();
   testMarkFilesAsSendFailedStoresError();
   testMarkFilesDeleteMessageFailedKeepsStatus();
   testMarkActiveQueueAsDeletedByUserKeepsHistory();
@@ -759,6 +761,74 @@ function testSearchArchiveQueueByFileNameOrAuthor() {
   });
 }
 
+function testSearchDownloadedFilesByFileNameOrAuthor() {
+  withRepository((repository) => {
+    const automaticallyDownloaded = repository.create(createRecord({
+      file_id: 'downloaded-video',
+      file_unique_id: 'downloaded-video-unique',
+      file_name: 'Holiday Clip.mp4',
+      author: null,
+      file_kind: 'video',
+      status: 'downloaded',
+      queue_position: 1,
+      file_size: 30 * 1024 * 1024
+    }));
+    repository.create(createRecord({
+      file_id: 'confirmed-doc',
+      file_unique_id: 'confirmed-doc-unique',
+      file_name: 'notes.pdf',
+      author: 'Holiday Keeper',
+      file_kind: 'document',
+      status: 'download_confirmed',
+      queue_position: 2,
+      file_size: 10 * 1024 * 1024
+    }));
+    repository.create(createRecord({
+      file_id: 'archived-file',
+      file_unique_id: 'archived-file-unique',
+      file_name: 'holiday-archive.zip',
+      status: 'archived',
+      queue_position: 3,
+      file_size: 50 * 1024 * 1024
+    }));
+    repository.create(createRecord({
+      file_id: 'pending-file',
+      file_unique_id: 'pending-file-unique',
+      author: 'Holiday Keeper',
+      status: 'pending_manual_download',
+      queue_position: 4,
+      file_size: 40 * 1024 * 1024
+    }));
+
+    const next = repository.searchDownloadedFiles('holiday', { limit: 10 });
+    const smallest = repository.searchDownloadedFiles('holiday', { limit: 10, orderBy: 'size_asc' });
+    const remaining = repository.searchDownloadedFiles('holiday', {
+      limit: 10,
+      excludedRecordIds: [automaticallyDownloaded.id]
+    });
+    const summary = repository.searchDownloadedSummary('HOLIDAY');
+    const remainingSummary = repository.searchDownloadedSummary('holiday', {
+      excludedRecordIds: [automaticallyDownloaded.id]
+    });
+
+    assert.deepStrictEqual(
+      next.map((item) => item.file_unique_id),
+      ['downloaded-video-unique', 'confirmed-doc-unique']
+    );
+    assert.deepStrictEqual(
+      smallest.map((item) => item.file_unique_id),
+      ['confirmed-doc-unique', 'downloaded-video-unique']
+    );
+    assert.deepStrictEqual(remaining.map((item) => item.file_unique_id), ['confirmed-doc-unique']);
+    assert.deepStrictEqual(summary, {
+      fileCount: 2,
+      totalKnownSize: 40 * 1024 * 1024,
+      unknownSizeFiles: 0
+    });
+    assert.strictEqual(remainingSummary.fileCount, 1);
+  });
+}
+
 function testGetShownToUserFilesReturnsShownRecords() {
   withRepository((repository) => {
     repository.create(createRecord({
@@ -1078,6 +1148,35 @@ function testMarkFilesAsQueuedRestoresPendingState() {
     assert.strictEqual(foundKnown.download_confirmed_at, null);
     assert.strictEqual(foundUnknown.status, 'pending_size_unknown');
     assert.strictEqual(foundUnknown.download_confirmed_at, null);
+  });
+}
+
+function testDownloadedFilesCanReturnToQueueOrArchive() {
+  withRepository((repository) => {
+    const returnedToQueue = repository.create(createRecord({
+      file_id: 'downloaded-to-queue',
+      file_unique_id: 'downloaded-to-queue-unique',
+      status: 'downloaded',
+      file_size: 10 * 1024 * 1024
+    }));
+    const returnedToArchive = repository.create(createRecord({
+      file_id: 'downloaded-to-archive',
+      file_unique_id: 'downloaded-to-archive-unique',
+      status: 'downloaded',
+      file_size: 10 * 1024 * 1024
+    }));
+
+    repository.markFilesAsQueued([returnedToQueue.id], '2026-05-16T10:30:00.000Z');
+    repository.markFilesAsArchived([returnedToArchive.id], '2026-05-16T10:30:00.000Z');
+
+    assert.strictEqual(
+      repository.findByFileUniqueId('downloaded-to-queue-unique').status,
+      'pending_manual_download'
+    );
+    assert.strictEqual(
+      repository.findByFileUniqueId('downloaded-to-archive-unique').status,
+      'archived'
+    );
   });
 }
 
